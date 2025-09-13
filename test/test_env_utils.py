@@ -9,7 +9,7 @@ from videorag._llm import (
     openai_4o_mini_config,
     azure_openai_config,
     ollama_config,
-    get_default_ollama_chat_model,
+    get_default_external_llm_chat_model as get_default_ollama_chat_model,
     internvl_hf_config,
 )
 from videorag._config import MINICPM_MODEL_PATH
@@ -350,20 +350,27 @@ def extract_final_answer(raw):
 
 
 def choose_llm_config():
-    # Priority: Ollama -> Custom OpenAI -> Standard OpenAI -> Azure OpenAI -> DeepSeek+BGE
+    # Priority: External LLM client -> Custom OpenAI -> Standard OpenAI -> Azure OpenAI -> DeepSeek+BGE
     from importlib.util import find_spec
     from videorag._llm import deepseek_bge_config as maybe_deepseek_bge_config, create_custom_openai_config, internvl_hf_config as _internvl_cfg
 
     # High-priority override: if user selects InternVL3_5-8B-HF via OLLAMA_CHAT_MODEL, route to local HF config (no Ollama)
     desired = os.environ.get("OLLAMA_CHAT_MODEL", get_default_ollama_chat_model()).strip()
-    if desired.lower() == "internvl3_5-8b-hf":
-        model_path = os.environ.get("INTERNVL_MODEL_PATH", "/root/autodl-tmp/Model/OpenGVLab/InternVL3_5-8B-HF")
-        print(f"[LLM] Using local Transformers: InternVL3_5-8B-HF (path: {model_path})")
-        print("[LLM] This path can be changed via INTERNVL_MODEL_PATH.")
-        return _internvl_cfg
+    short = (desired or "").split(":", 1)[0].lower()
+    try:
+        from videorag._llm import MODEL_NAME_TO_LOCAL_PATH, local_hf_generic_config, internvl_hf_config
+        if short in (MODEL_NAME_TO_LOCAL_PATH or {}):
+            if short == "internvl":
+                model_path = os.environ.get("INTERNVL_MODEL_PATH", MODEL_NAME_TO_LOCAL_PATH.get("internvl"))
+                print(f"[LLM] Using local InternVL Transformers: path: {model_path}")
+                return internvl_hf_config
+            print(f"[LLM] Using local HF model for shortname '{short}' (path: {MODEL_NAME_TO_LOCAL_PATH.get(short)})")
+            return local_hf_generic_config
+    except Exception:
+        pass
 
     if find_spec("ollama"):
-        print(f"[LLM] Using Ollama config with {get_default_ollama_chat_model()} (ensure ollama server is running)")
+        print(f"[LLM] Using external LLM client configuration with {get_default_ollama_chat_model()} (ensure client or local model paths are available)")
         return ollama_config
 
     # Fallbacks
@@ -390,7 +397,7 @@ def choose_llm_config():
         print("[LLM] Using DeepSeek + BGE-M3 (SiliconFlow embeddings)")
         return maybe_deepseek_bge_config
 
-    print("[LLM] No usable LLM backend detected. Please install 'ollama' or configure other backends.")
+    print("[LLM] No usable LLM backend detected. Set OLLAMA_CHAT_MODEL to a shortname (llama,qwen,gemma,internvl,minicpm) or a local HF path, or configure OpenAI/Azure credentials.")
     sys.exit(2)
 
 

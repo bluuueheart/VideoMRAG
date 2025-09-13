@@ -12,12 +12,9 @@ except Exception:
     RateLimitError = Exception  # type: ignore
     _OPENAI_AVAILABLE = False
 
-try:
-    from ollama import AsyncClient  # type: ignore
-    _OLLAMA_AVAILABLE = True
-except Exception:
-    AsyncClient = None  # type: ignore
-    _OLLAMA_AVAILABLE = False
+# Defer importing ollama until actually needed to avoid import-time failure
+AsyncClient = None  # type: ignore
+_OLLAMA_AVAILABLE = None
 
 from ._utils import wrap_embedding_func_with_attrs
 from ._utils import EmbeddingFunc
@@ -56,13 +53,28 @@ def get_custom_openai_async_client_instance(base_url: str, api_key: str):
     return global_custom_openai_async_client
 
 
-def get_ollama_async_client_instance():
+def get_external_llm_async_client_instance():
     global global_ollama_client
     if global_ollama_client is None:
+        # Try to import an external LLM client lazily (Ollama-compatible)
+        global _OLLAMA_AVAILABLE, AsyncClient
+        if _OLLAMA_AVAILABLE is None:
+            try:
+                from ollama import AsyncClient as _AsyncClient  # type: ignore
+                AsyncClient = _AsyncClient
+                _OLLAMA_AVAILABLE = True
+            except Exception:
+                AsyncClient = None
+                _OLLAMA_AVAILABLE = False
+
         if not _OLLAMA_AVAILABLE:
-            raise RuntimeError("Ollama client is not available. Please 'pip install ollama' and ensure Ollama server is running.")
+            raise RuntimeError("External LLM client not available. Configure a local HF model shortname via OLLAMA_CHAT_MODEL or install a supported external client.")
         global_ollama_client = AsyncClient()  # Adjust base URL if necessary
     return global_ollama_client
+
+# Backwards-compatible alias
+def get_ollama_async_client_instance():
+    return get_external_llm_async_client_instance()
 
 
 # Setup LLM Configuration (moved unchanged)

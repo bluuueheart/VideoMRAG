@@ -1,6 +1,7 @@
 # -------------------------------------------------------------------
 # Core ML/DL Frameworks
 # 核心机器学习/深度学习框架
+# python3.11 cuda11.8
 # -------------------------------------------------------------------
 torch==2.3.1
 torchvision==0.18.1
@@ -80,7 +81,6 @@ ctranslate2==4.4.0
 tiktoken
 httpx
 tenacity
-ollama
 neo4j
 xxhash
 graspologic

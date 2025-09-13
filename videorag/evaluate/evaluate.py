@@ -17,10 +17,10 @@ try:
     from transformers.utils.logging import set_verbosity_error
     set_verbosity_error()
     # Use the same default model resolver as generation
-    from .._llm import get_default_ollama_chat_model
+    from .._llm import get_default_external_llm_chat_model as get_default_ollama_chat_model
 except Exception:  # pragma: no cover
     def get_default_ollama_chat_model() -> str:  # type: ignore
-        return os.environ.get("OLLAMA_CHAT_MODEL", "qwen2.5vl:7b")
+        return os.environ.get("OLLAMA_CHAT_MODEL", "qwen")
 
 
 try:
@@ -29,7 +29,7 @@ try:
         OUTPUT_BASE_DIR,
         OUTPUT_ROOT_DIR,
         DATA_ROOT_DIR,
-        DEFAULT_OLLAMA_DIR,
+        DEFAULT_EXTERNAL_MODELS_DIR,
         DEFAULT_HF_HOME,
         EVAL_LLM_MODEL,
         OLLAMA_MODEL,
@@ -88,6 +88,13 @@ except Exception:
             EVAL_PROMPT_TEMPLATE,
         )
 
+# Ensure DATA_ROOT_DIR defaults to the requested Benchmark path when not set
+try:
+    if not (isinstance(DATA_ROOT_DIR, str) and DATA_ROOT_DIR):
+        DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR") or "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Benchmark"
+except NameError:
+    DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR") or "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Benchmark"
+
 
 # Prompts are now imported from .prompts without any content changes
 
@@ -113,8 +120,15 @@ def preflight_checks() -> None:
     """
     import shutil
 
-    if shutil.which("ollama") is None:
-        print("[Preflight Warn] 'ollama' binary not found in PATH. LLM evaluation may fail.")
+    # Prefer local HF models when configured; warn only if neither local models nor ollama are available
+    try:
+        from .._llm import MODEL_NAME_TO_LOCAL_PATH
+        has_local = any(os.path.exists(p) for p in (MODEL_NAME_TO_LOCAL_PATH or {}).values())
+    except Exception:
+        has_local = False
+
+    if not has_local:
+        print("[Preflight Warn] No local HF models found. Ensure local model paths or an external LLM client are available.")
 
     # ROUGE availability
     rouge_ok = False
@@ -204,9 +218,10 @@ def normalize_keypoints(raw_keypoints: Any, gt_path: str) -> Dict[str, List[str]
     return {"video": video_list, "text": text_list}
 
 
-def call_ollama(prompt: str, model: str = OLLAMA_MODEL, timeout_sec: int = 240, retries: int = 2) -> str:
+def call_external_llm(prompt: str, model: str = OLLAMA_MODEL, timeout_sec: int = 240, retries: int = 2) -> str:
     env = os.environ.copy()
-    env.setdefault("OLLAMA_MODELS", DEFAULT_OLLAMA_DIR)
+    env.setdefault("LLM_MODELS_DIR", DEFAULT_EXTERNAL_MODELS_DIR)
+    env.setdefault("OLLAMA_MODELS", os.environ.get("LLM_MODELS_DIR", DEFAULT_EXTERNAL_MODELS_DIR))
     env.setdefault("OLLAMA_NUM_GPU", "1")
     env.setdefault("OLLAMA_KEEP_ALIVE", "5m")
 
@@ -232,25 +247,25 @@ def call_ollama(prompt: str, model: str = OLLAMA_MODEL, timeout_sec: int = 240, 
                 f"Attempt {attempt + 1}/{retries + 1} failed. RC={proc.returncode}. "
                 f"stderr: '{stderr[:200]}...'"
             )
-            print(f"[Ollama Call Warn] {error_message}")
+            print(f"[External LLM Call Warn] {error_message}")
             if attempt < retries:
                 time.sleep(5)
                 continue
             else:
-                return f"[ollama_error]{error_message}"
+                return f"[external_llm_error]{error_message}"
         except subprocess.TimeoutExpired:
             error_message = f"Attempt {attempt + 1}/{retries + 1} timed out after {timeout_sec}s."
-            print(f"[Ollama Call Warn] {error_message}")
+            print(f"[External LLM Call Warn] {error_message}")
             if attempt < retries:
                 time.sleep(5)
                 continue
             else:
-                return f"[ollama_error]{error_message}"
+                return f"[external_llm_error]{error_message}"
         except Exception as e:
             error_message = f"Attempt {attempt + 1}/{retries + 1} failed with an unexpected error: {e}"
             # Don't retry on unexpected errors
-            return f"[ollama_error]{error_message}"
-    return "[ollama_error]Exhausted all retries."
+            return f"[external_llm_error]{error_message}"
+    return "[external_llm_error]Exhausted all retries."
 
 
 def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -464,14 +479,14 @@ def evaluate_one(
 
     prompt = EVAL_PROMPT_TEMPLATE.replace("{test_input}", format_test_input_for_prompt(eval_input))
 
-    raw = call_ollama(prompt)
+    raw = call_external_llm(prompt)
     parsed = extract_json_object(raw)
 
     # Retry once with a simplified prompt if JSON parsing failed
     if not isinstance(parsed, dict):
         print(f"[Warn] Initial JSON parsing failed. Retrying with a simpler prompt. Raw output: {raw[:500]}...")
         prompt = EVAL_PROMPT_TEMPLATE.replace("{test_input}", format_test_input_for_prompt(eval_input))
-        raw = call_ollama(prompt)
+        raw = call_external_llm(prompt)
         parsed = extract_json_object(raw)
         if not isinstance(parsed, dict):
             print(f"[Error] JSON parsing failed on second attempt. Raw output: {raw[:500]}...")
@@ -608,20 +623,23 @@ def main(args: argparse.Namespace) -> None:
     # accept a single file or scan the provided directory recursively. Otherwise
     # fall back to the default OUTPUT_ROOT_DIR behavior (scan model subfolders).
     strict_name = re.compile(r"^videorag_top5_segments_\d{8}_\d{6}\.json$")
+    # 也支持纯数字命名的单题结果文件，例如: 5.json
+    numeric_name = re.compile(r"^\d+\.json$")
     out_files: List[str] = []
 
     target_path = getattr(args, 'target', None)
     if target_path:
         target_path = str(target_path)
         if os.path.isfile(target_path):
-            if strict_name.match(os.path.basename(target_path)):
+            bn = os.path.basename(target_path)
+            if strict_name.match(bn) or numeric_name.match(bn):
                 out_files = [target_path]
             else:
                 print(f"[Evaluate] Given file does not match expected name pattern: {target_path}")
                 return
         elif os.path.isdir(target_path):
-            candidate_files = glob.glob(os.path.join(target_path, "**", "videorag_top5_segments_*.json"), recursive=True)
-            out_files = [f for f in candidate_files if strict_name.match(os.path.basename(f))]
+            candidate_files = glob.glob(os.path.join(target_path, "**", "*.json"), recursive=True)
+            out_files = [f for f in candidate_files if strict_name.match(os.path.basename(f)) or numeric_name.match(os.path.basename(f))]
             if not out_files:
                 print(f"[Evaluate] No result files found under provided path: {target_path}")
                 return
@@ -629,8 +647,8 @@ def main(args: argparse.Namespace) -> None:
             print(f"[Evaluate] Target path not found: {target_path}")
             return
     else:
-        candidate_files = glob.glob(os.path.join(OUTPUT_ROOT_DIR, "*", "videorag_top5_segments_*.json"))
-        out_files = [f for f in candidate_files if strict_name.match(os.path.basename(f))]
+        candidate_files = glob.glob(os.path.join(OUTPUT_ROOT_DIR, "*", "*.json"))
+        out_files = [f for f in candidate_files if strict_name.match(os.path.basename(f)) or numeric_name.match(os.path.basename(f))]
         if not out_files:
             print(f"[Evaluate] No result files found under {OUTPUT_ROOT_DIR}")
             return
@@ -668,7 +686,7 @@ def main(args: argparse.Namespace) -> None:
                     reasoning = str(item.get("eval_reasoning", "")).strip()
                     required_fields = ["likert_score", "eval_reasoning"]
                     missing_required = any(k not in item for k in required_fields)
-                    is_faulty = missing_required or reasoning.startswith(("[no_json]", "[ollama_error]"))
+                    is_faulty = missing_required or reasoning.startswith(("[no_json]", "[ollama_error]", "[external_llm_error]"))
 
                     if is_faulty:
                         is_fully_evaluated = False
@@ -724,7 +742,7 @@ def main(args: argparse.Namespace) -> None:
                 ]
                 missing_required_item = any(k not in item for k in required_fields_item)
                 # Treat explicit failure markers or likert==null as faulty and re-run-able
-                has_error_flag = reasoning_existing.startswith(("[no_json]", "[ollama_error]", "[eval_failed]"))
+                has_error_flag = reasoning_existing.startswith(("[no_json]", "[ollama_error]", "[external_llm_error]", "[eval_failed]"))
                 likert_is_null = (item.get("likert_score", "__MISSING__") is None)
                 if not missing_required_item and not has_error_flag and not likert_is_null:
                     # Already has valid evaluation, keep as-is

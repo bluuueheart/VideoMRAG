@@ -1,4 +1,4 @@
-# VideoRAG Batch Pipeline (test.py) 简要说明
+# VideoRAG Batch Pipeline 简要说明
 
 本 README 旨在快速了解当前 `test.py` 运行整条视频多模态问答（VideoRAG + 迭代细化）流水线所依赖的核心文件与步骤，力求精简。
 
@@ -21,7 +21,7 @@
 ## 3. `videorag` 包内关键子模块
 | 文件/目录 | 作用（摘要） |
 |-----------|--------------|
-| `videorag/_llm.py` | 定义多种 LLM/Embedding 配置（Ollama / OpenAI / Azure / DeepSeek / HuggingFace InternVL 等），暴露 `cheap_model_func` 接口供调用。|
+| `videorag/_llm.py` | 定义多种 LLM/Embedding 配置（本地 Hugging Face 模型短名/路径 / OpenAI / Azure / DeepSeek / InternVL 等），暴露 `cheap_model_func` 接口供调用。|
 | `videorag/_llm_azure.py` | (新增) 将原 `videorag/_llm.py` 中 Azure/OpenAI on Azure 相关的 helper 与配置拆分到此文件，便于维护。|
 | `videorag/_config.py` | 常量配置（如 `MINICPM_MODEL_PATH` 等）。|
 | `videorag/iterative_refinement.py` | 提供 `refine_context` 与高层 refine 调度逻辑。|
@@ -39,15 +39,15 @@
 ## 4. 运行所需外部资源/目录
 | 资源 | 说明 |
 |------|------|
-| `faster-distil-whisper-large-v3/` | ASR 模型目录（WhisperModel 加载）。|
+| `faster-distil-whisper-large-v3/` | ASR 模型目录（WhisperModel 加载）。建议放到共享模型目录，如 `/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5`。|
 | `MINICPM_MODEL_PATH` 指向的目录 |（可选）MiniCPM / 相关多模态本地模型。|
-| 输入视频/JSON 根目录 | 代码默认 `/root/autodl-tmp/903test`（可修改）。包含：1) 子目录(每视频)内多个 QA JSON；或 2) 顶层 *top5* 结构 JSON。|
-| 输出目录 | `/root/autodl-tmp/Result/<model_tag>/...` 自动创建；写入回答与失败日志。|
+| 输入视频/JSON 根目录 | 代码默认 `/root/autodl-tmp/903test`（可修改，或使用环境变量 `INPUT_BASE_DIR` 指定）。包含：1) 子目录(每视频)内多个 QA JSON；或 2) 顶层 *top5* 结构 JSON。|
+| 输出目录 | 默认写入到部署用户的 Result 目录，例如 `/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result/<model_tag>/...`。可通过环境变量 `OUTPUT_BASE_DIR` 覆盖。|
 
 ## 5. 主要执行流程（逻辑阶段）
 1. 环境准备：`sanitize_cuda_libs()` 清理冲突 CUDA 库路径；`check_dependencies()`、`check_models()`。  
 2. 加载 ASR：智能判定 CUDA → `WhisperModel` (int8)。  
-3. 选择 LLM：`choose_llm_config()`（优先 Ollama，可通过环境变量切换）。  
+3. 选择 LLM：`choose_llm_config()`（优先本地短名或外部 LLM 客户端，可通过环境变量切换）。  
 4. 解析输入：两种模式  
    - 目录模式：遍历每个视频子目录内问题 JSON。  
    - 顶层 Top5 JSON 模式：从 `query` + `top5_segment_names` 重建 30s 片段 URL 映射。  
@@ -71,19 +71,26 @@
     ```
 
   2. 准备模型与资源：
-    - ASR 模型目录（例如 `faster-distil-whisper-large-v3/`）。
-    - 如使用本地 MiniCPM，请设置 `MINICPM_MODEL_PATH` 环境变量指向模型路径。
-    - 如使用 YOLO-World，请把模型文件放到可访问路径（默认代码中示例路径可改）。
+  - ASR 模型目录（例如 `faster-distil-whisper-large-v3/`）。建议放到 `/home/hadoop-aipnlp/.../00_opensource_models/...` 并通过 `FASTER_WHISPER_DIR` 或 `ASR_MODEL_PATH` 环境变量指定。
+  - 如使用本地 MiniCPM，请设置 `MINICPM_MODEL_PATH` 环境变量指向模型路径（示例：`/home/.../00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5`）。
+  - 如使用 YOLO-World，请把模型文件放到可访问路径（示例：`/home/.../00_opensource_models/yolov8m-worldv2.pt`），并可通过 `YOLOWORLD_MODEL_PATH` 环境变量覆盖。 
 
   3. 运行（示例）：
 
-    ```cmd
-    # 跳过迭代细化并强制重跑
-    python test/test.py --base-mode --force
+  ```cmd
+  # 跳过迭代细化并强制重跑
+  python test/test.py --base-mode --force
 
-    # 默认模式
-    python test/test.py --force
-    ```
+  # 默认模式
+  python test/test.py --force
+
+  # 若需要指定环境变量（示例，Linux/bash）
+  export FASTER_WHISPER_DIR=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5
+  export MINICPM_MODEL_PATH=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5
+  export YOLOWORLD_MODEL_PATH=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt
+  export OUTPUT_BASE_DIR=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result
+  python test/test.py --force
+  ```
 
   主要目录与文件（简要）
   - `test/test.py`：主入口脚本，负责调度整个任务流。  
@@ -95,7 +102,7 @@
   配置与环境变量（常用）
   - `--base-mode`：跳过迭代细化（仅基础帧+字幕）。
   - `--force`：忽略已有结果，强制重跑。 
-  - `OLLAMA_CHAT_MODEL`：指定 Ollama 模型（如使用 Ollama）。
+  - `OLLAMA_CHAT_MODEL`：指定模型短名或本地 Hugging Face 模型路径（例如短名 `llama`, `qwen`, `gemma`, `internvl`, `minicpm`，或直接写完整路径）。
   - `MINICPM_MODEL_PATH`：MiniCPM 本地模型路径（如使用）。
 
   调试建议
@@ -113,7 +120,7 @@
 
   快速运行示例（Windows / cmd.exe 环境）
 
-  1) 单进程本地运行（使用默认环境变量或配置的 Ollama/OpenAI 等后端）：
+   1) 单进程本地运行（使用默认环境变量或配置的本地/外部 LLM 客户端或 OpenAI 后端）：
   python test.py
 
   1) 以指定多卡并发运行（例如使用 GPU 0 和 1，每个子进程绑定一个 GPU）：
@@ -122,7 +129,7 @@
 
   1) 为不同 GPU 指定不同的模型（父进程会将对应模型设置为子进程的 `OLLAMA_CHAT_MODEL`）：
   set WORKER_GPUS=0,1
-  set MODEL_GPU_OVERRIDES=0=ollama-model-a,1=internvl3_5-8b-hf
+  set MODEL_GPU_OVERRIDES=0=llama,1=internvl
   python test.py --gpus 0,1 --workers 2
 
   说明：VLM 加速（视觉-语言模块加速）在脚本中默认启用（llm_cfg.vlm_accel=True），子进程会收到 `VLM_ACCEL=1` 环境变量，后端实现需读取该标记并执行具体优化。

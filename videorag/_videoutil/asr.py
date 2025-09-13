@@ -6,7 +6,9 @@ from faster_whisper import WhisperModel
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 def speech_to_text(video_name, working_dir, segment_index2name, audio_output_format):
-    model = WhisperModel("./faster-distil-whisper-large-v3")
+    # Prefer environment overrides: FASTER_WHISPER_DIR or ASR_MODEL_PATH, fallback to repo-relative path
+    model_dir = os.environ.get("FASTER_WHISPER_DIR") or os.environ.get("ASR_MODEL_PATH") or os.path.join(os.path.dirname(__file__), "..", "..", "faster-distil-whisper-large-v3")
+    model = WhisperModel(model_dir)
     model.logger.setLevel(logging.WARNING)
     
     cache_path = os.path.join(working_dir, '_cache', video_name)

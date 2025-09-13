@@ -31,6 +31,7 @@ from ._llm_common import (
     get_openai_async_client_instance,
     get_custom_openai_async_client_instance,
     get_ollama_async_client_instance,
+    get_external_llm_async_client_instance,
     LLMConfig,
 )
 from ._llm_azure import (
@@ -53,9 +54,87 @@ from ._llm_openai import (
     openai_4o_mini_config,
 )
 
-# ===== Default Ollama model names (can be overridden via env) =====
-DEFAULT_OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "llava-llama3:8b")
-DEFAULT_OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+# ===== Default chat model name (can be overridden via env). Use short names to select local HF models =====
+# Supported short names: 'llama', 'qwen', 'gemma', 'internvl', 'minicpm', 'internvl'
+DEFAULT_OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen")
+DEFAULT_OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "all-MiniLM-L6-v2")
+
+# Mapping short names to local filesystem Hugging Face model paths (user-provided)
+# Update these paths if needed; user-specified paths from the request are used here.
+MODEL_NAME_TO_LOCAL_PATH = {
+    "llama": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct",
+    "qwen": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/Qwen/Qwen2___5-7B-Instruct",
+    "qwen3": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/Qwen/Qwen3-32B",
+    "gemma": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/google/gemma-3-12b-it",
+    "minicpm": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5",
+    "internvl": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/OpenGVLab/InternVL3_5-8B-HF",
+    # embedding model
+    "all-MiniLM-L6-v2": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/sentence-transformers/all-MiniLM-L6-v2",
+    # YOLO-World detector binary
+    "yolov8m-worldv2": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt",
+}
+
+# Cache for loaded HF text models and tokenizers
+_HF_TEXT_MODELS = {}
+
+_HF_EMBEDDING_MODELS = {}
+
+
+def _resolve_model_path_for_shortname(short: str) -> str | None:
+    """Return configured local model path for a short name, or None."""
+    if not short:
+        return None
+    p = MODEL_NAME_TO_LOCAL_PATH.get(short)
+    if p:
+        return p
+    # allow qwen3 alias
+    if short.startswith("qwen3") and "qwen3" in MODEL_NAME_TO_LOCAL_PATH:
+        return MODEL_NAME_TO_LOCAL_PATH.get("qwen3")
+    return None
+
+
+async def local_complete_router(model_short_name: str, prompt: str, system_prompt: str | None = None, images_base64: list | None = None, **kwargs) -> str:
+    """Route to an appropriate local completion implementation depending on model short name.
+    Preference: vllm (if available) -> transformers -> internvl_hf_complete (already implemented)
+    """
+    path = _resolve_model_path_for_shortname(model_short_name)
+    if not path:
+        raise RuntimeError(f"No local model path configured for '{model_short_name}'")
+
+    # InternVL handled separately
+    if model_short_name == "internvl":
+        return await internvl_hf_complete(model_name=path, prompt=prompt, system_prompt=system_prompt, images_base64=images_base64, **kwargs)
+
+    # Try vllm first
+    try:
+        from vllm import LLM
+        def _vllm_sync():
+            with LLM(model=path) as llm:
+                gen = llm.generate(prompt if not system_prompt else f"{system_prompt}\n\n{prompt}", max_tokens=int(kwargs.get("max_new_tokens", kwargs.get("max_new_tokens", 512))), temperature=float(kwargs.get("temperature", 0.1)))
+                for r in gen:
+                    try:
+                        return r.outputs[0].text
+                    except Exception:
+                        return str(r)
+            return ""
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _vllm_sync)
+    except Exception:
+        # fall back to transformers
+        pass
+
+    # Transformers path
+    def _transformers_sync():
+        from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True, use_fast=False)
+        model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True, device_map="auto")
+        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, device_map="auto")
+        out = pipe(prompt if not system_prompt else f"{system_prompt}\n\n{prompt}", max_new_tokens=int(kwargs.get("max_new_tokens", 512)), do_sample=False)
+        return out[0].get("generated_text") or out[0].get("text") or ""
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _transformers_sync)
 
 def get_default_ollama_chat_model() -> str:
     return DEFAULT_OLLAMA_CHAT_MODEL
@@ -71,13 +150,12 @@ def get_default_ollama_embed_model() -> str:
 # Azure OpenAI helpers were moved to videorag/_llm_azure.py during refactor.
 
 
-######  Ollama configuration
+######  External LLM configuration (Ollama-compatible client)
 
-async def ollama_complete_if_cache(
+async def external_llm_complete_if_cache(
     model, prompt, system_prompt=None, history_messages=[], **kwargs
 ) -> str:
-    # Initialize the Ollama client
-    ollama_client = get_ollama_async_client_instance()
+    # Note: defer initializing Ollama client until we know we need it
 
     hashing_kv: BaseKVStorage = kwargs.pop("hashing_kv", None)
     # Pop images_base64 to avoid it being part of the hash
@@ -179,13 +257,25 @@ async def ollama_complete_if_cache(
         if if_cache_return is not None and if_cache_return["return"] is not None:
             return if_cache_return["return"]
 
-    # Send the request to Ollama
+    # Send the request to external LLM client (unless routed to local HF)
     # 统一固定采样参数
     options = {
         "keep_alive": -1,
         "temperature": 0.1,
         "top_p": 1,
     }
+    # If model is a short name that maps to local HF model, delegate to HF wrapper
+    short = (model or "").split(":")[0].lower()
+    if short in MODEL_NAME_TO_LOCAL_PATH:
+        # Route to central local router which picks vllm/transformers/internvl as needed
+        try:
+            return await local_complete_router(short, prompt, system_prompt=system_prompt, images_base64=images_base64, **kwargs)
+        except Exception as e:
+            # fallback to external client if available
+            print(f"[LLM-Router] Local complete failed for {short}: {e}. Falling back to external client if available.")
+
+    # If we reach here, use Ollama client
+    ollama_client = get_external_llm_async_client_instance()
     response = await ollama_client.chat(
         model=model,
         messages=messages,
@@ -204,8 +294,8 @@ async def ollama_complete_if_cache(
     return response['message']['content']
 
 
-async def ollama_complete(model_name, prompt, system_prompt=None, history_messages=[], **kwargs) -> str:
-    return await ollama_complete_if_cache(
+async def external_llm_complete(model_name, prompt, system_prompt=None, history_messages=[], **kwargs) -> str:
+    return await external_llm_complete_if_cache(
         model_name,
         prompt,
         system_prompt=system_prompt,
@@ -213,8 +303,12 @@ async def ollama_complete(model_name, prompt, system_prompt=None, history_messag
         **kwargs
     )
 
-async def ollama_mini_complete(model_name, prompt, system_prompt=None, history_messages=[], **kwargs) -> str:
-    return await ollama_complete_if_cache(
+# Backwards-compatible alias
+async def ollama_complete(model_name, prompt, system_prompt=None, history_messages=[], **kwargs) -> str:
+    return await external_llm_complete(model_name, prompt, system_prompt=system_prompt, history_messages=history_messages, **kwargs)
+
+async def external_llm_mini_complete(model_name, prompt, system_prompt=None, history_messages=[], **kwargs) -> str:
+    return await external_llm_complete_if_cache(
         # "deepseek-r1:latest",  # For now select your model
         model_name,
         prompt,
@@ -223,14 +317,26 @@ async def ollama_mini_complete(model_name, prompt, system_prompt=None, history_m
         **kwargs
     )
 
+# Backwards-compatible alias
+async def ollama_mini_complete(model_name, prompt, system_prompt=None, history_messages=[], **kwargs) -> str:
+    return await external_llm_mini_complete(model_name, prompt, system_prompt=system_prompt, history_messages=history_messages, **kwargs)
+
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception_type((RateLimitError, APIConnectionError)),
 )
-async def ollama_embedding(model_name: str, texts: list[str]) -> np.ndarray:
+async def external_llm_embedding(model_name: str, texts: list[str]) -> np.ndarray:
     # Initialize the Ollama client
-    ollama_client = get_ollama_async_client_instance()
+    # If short name maps to local embedding model, use HF embedding
+    short = (model_name or "").split(":")[0].lower()
+    if short in MODEL_NAME_TO_LOCAL_PATH:
+        try:
+            return await hf_local_embedding(MODEL_NAME_TO_LOCAL_PATH[short], texts)
+        except Exception as e:
+            print(f"[LLM-Router] HF local embedding failed for {short}: {e}. Falling back to external embedding service if available.")
+
+    ollama_client = get_external_llm_async_client_instance()
 
     # Send the request to Ollama for embeddings
     response = await ollama_client.embed(
@@ -243,28 +349,120 @@ async def ollama_embedding(model_name: str, texts: list[str]) -> np.ndarray:
 
     return np.array(embeddings)
 
-ollama_config = LLMConfig(
-    embedding_func_raw = ollama_embedding,
+# Backwards-compatible alias
+async def ollama_embedding(model_name: str, texts: list[str]) -> np.ndarray:
+    return await external_llm_embedding(model_name, texts)
+
+
+async def hf_local_text_complete(model_short_name: str, prompt: str, system_prompt: str | None = None, images_base64: list | None = None, **kwargs) -> str:
+    """Minimal async wrapper that loads a local HF model and runs text generation in a thread."""
+    model_path = MODEL_NAME_TO_LOCAL_PATH.get(model_short_name)
+    if model_path is None:
+        raise RuntimeError(f"No local path configured for model {model_short_name}")
+
+    # If this is the InternVL model, delegate to its dedicated implementation
+    if model_short_name == "internvl":
+        return await internvl_hf_complete(model_name=model_path, prompt=prompt, system_prompt=system_prompt, images_base64=images_base64, **kwargs)
+
+    def _sync_generate():
+        # Try vllm first for faster, memory-efficient inference if available
+        try:
+            from vllm import LLM
+            using_vllm = True
+        except Exception:
+            using_vllm = False
+
+        if using_vllm:
+            try:
+                from vllm import LLM
+                # Use a short lived LLM instance for sync generation
+                with LLM(model=model_path) as llm:
+                    gen = llm.generate(prompt if not system_prompt else f"{system_prompt}\n\n{prompt}", max_tokens=int(kwargs.get("max_new_tokens", 512)), temperature=float(kwargs.get("temperature", 0.1)))
+                    # collect first result
+                    for r in gen:
+                        try:
+                            return r.outputs[0].text
+                        except Exception:
+                            # fallback to stringification
+                            return str(r)
+            except Exception as e:
+                # vllm failed; fall through to transformers
+                print(f"[HF-Router] vllm generation failed for {model_short_name}: {e}")
+
+        try:
+            from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+            import torch
+        except Exception as e:
+            raise RuntimeError("transformers and torch are required for local HF generation") from e
+
+        # Load/cache model
+        key = f"text::{model_path}"
+        if key not in _HF_TEXT_MODELS:
+            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+            model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, device_map="auto")
+            _HF_TEXT_MODELS[key] = (tokenizer, model)
+        else:
+            tokenizer, model = _HF_TEXT_MODELS[key]
+
+        full_prompt = prompt if not system_prompt else f"{system_prompt}\n\n{prompt}"
+
+        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, device_map="auto")
+        out = pipe(full_prompt, max_new_tokens=int(kwargs.get("max_new_tokens", 512)), do_sample=False)
+        text = out[0].get("generated_text") or out[0].get("text") or ""
+        return text
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_generate)
+
+
+async def hf_local_embedding(model_path: str, texts: list[str]) -> np.ndarray:
+    """Minimal async wrapper to compute embeddings using sentence-transformers or HF encoder."""
+    def _sync_embed():
+        try:
+            from sentence_transformers import SentenceTransformer
+            import numpy as _np
+        except Exception as e:
+            raise RuntimeError("sentence-transformers is required for local embeddings") from e
+
+        key = f"embed::{model_path}"
+        if key not in _HF_EMBEDDING_MODELS:
+            model = SentenceTransformer(model_path)
+            _HF_EMBEDDING_MODELS[key] = model
+        else:
+            model = _HF_EMBEDDING_MODELS[key]
+
+        emb = model.encode(texts, convert_to_numpy=True)
+        return emb
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_embed)
+
+# External-client-backed configuration (keeps naming for backward compatibility)
+external_llm_config = LLMConfig(
+    embedding_func_raw = external_llm_embedding,
     embedding_model_name = DEFAULT_OLLAMA_EMBED_MODEL,
     embedding_dim = 768,
     embedding_max_token_size=8192,
     embedding_batch_num = 1,
     embedding_func_max_async = 1,
     query_better_than_threshold = 0.2,
-    best_model_func_raw = ollama_complete ,
+    best_model_func_raw = external_llm_complete ,
     best_model_name = DEFAULT_OLLAMA_CHAT_MODEL, # use Qwen2.5-VL 7B as generator
     best_model_max_token_size = 32768,
     best_model_max_async  = 1,
-    cheap_model_func_raw = ollama_mini_complete,
+    cheap_model_func_raw = external_llm_mini_complete,
     cheap_model_name = DEFAULT_OLLAMA_CHAT_MODEL,
     cheap_model_max_token_size = 32768,
     cheap_model_max_async = 1
 )
 
+# Backwards-compatible alias
+ollama_config = external_llm_config
+
 # Add a post-init to wrap model functions to accept images_base64
-_original_ollama_post_init = ollama_config.__post_init__
-def _ollama_post_init_wrapper(self):
-    _original_ollama_post_init(self)
+_original_external_llm_post_init = external_llm_config.__post_init__
+def _external_llm_post_init_wrapper(self):
+    _original_external_llm_post_init(self)
     
     original_best_model_func = self.best_model_func
     def _best_with_vlm(prompt, *args, **kwargs):
@@ -278,7 +476,7 @@ def _ollama_post_init_wrapper(self):
         kwargs.setdefault('vlm_accel', getattr(self, 'vlm_accel', True))
         return original_cheap_model_func(prompt, *args, **kwargs)
     self.cheap_model_func = _cheap_with_vlm
-ollama_config.__post_init__ = _ollama_post_init_wrapper.__get__(ollama_config)
+external_llm_config.__post_init__ = _external_llm_post_init_wrapper.__get__(external_llm_config)
 
 
 ###### DeepSeek Configuration
@@ -710,6 +908,28 @@ internvl_hf_config = LLMConfig(
     cheap_model_max_async = 2
 )
 
+
+# Generic local HF wrapper config (routes to vllm/transformers/internvl depending on short name)
+local_hf_generic_config = LLMConfig(
+    embedding_func_raw = hf_local_embedding if 'hf_local_embedding' in globals() else _dummy_embedding,
+    embedding_model_name = DEFAULT_OLLAMA_EMBED_MODEL,
+    embedding_dim = 768,
+    embedding_max_token_size = 8192,
+    embedding_batch_num = 8,
+    embedding_func_max_async = 4,
+    query_better_than_threshold = 0.2,
+
+    best_model_func_raw = lambda model_name, prompt, **kw: local_complete_router(model_name.split(":",1)[0].lower(), prompt, **kw),
+    best_model_name = DEFAULT_OLLAMA_CHAT_MODEL,
+    best_model_max_token_size = 32768,
+    best_model_max_async = 2,
+
+    cheap_model_func_raw = lambda model_name, prompt, **kw: local_complete_router(model_name.split(":",1)[0].lower(), prompt, **kw),
+    cheap_model_name = DEFAULT_OLLAMA_CHAT_MODEL,
+    cheap_model_max_token_size = 32768,
+    cheap_model_max_async = 2,
+)
+
 # ==================================================================================
 # == Specific model for Refinement Evaluation
 # ==================================================================================
@@ -770,6 +990,10 @@ async def ollama_refiner_func(model_name: str, prompt: str, **kwargs) -> str:
     if "llava" in model_name:
         # 仍走通用通道，但已在 ollama_complete_if_cache 中统一固定 temperature/top_p
         return await ollama_complete(model_name, prompt, **kwargs)
+    # If short name maps to local HF, use local wrapper
+    short = (model_name or "").split(":")[0].lower()
+    if short in MODEL_NAME_TO_LOCAL_PATH:
+        return await hf_local_text_complete(model_short_name=short, prompt=prompt, **kwargs)
 
     client = get_ollama_async_client_instance()
     messages = [{"role": "user", "content": prompt}]
@@ -798,3 +1022,16 @@ async def internvl_refiner_func(model_name: str, prompt: str, **kwargs) -> str:
         prompt=prompt,
         system_prompt=kwargs.get("system_prompt")
     )
+
+
+# Backwards-compatible neutral wrappers (avoid leaving only 'ollama_' internal names)
+async def external_llm_refiner_func(model_name: str, prompt: str, **kwargs) -> str:
+    """Neutral wrapper that routes to the legacy ollama refiner implementation or local HF.
+    Keeps a clear, non-Ollama name in call sites while preserving behaviour.
+    """
+    return await ollama_refiner_func(model_name=model_name, prompt=prompt, **kwargs)
+
+
+def get_default_external_llm_chat_model() -> str:
+    """Return default chat model (alias for get_default_ollama_chat_model for compatibility)."""
+    return get_default_ollama_chat_model()

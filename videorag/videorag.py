@@ -16,7 +16,7 @@ from ._llm import (
     LLMConfig,
     openai_config,
     azure_openai_config,
-    ollama_config
+    external_llm_config
 )
 from ._op import (
     chunking_by_video_segments,

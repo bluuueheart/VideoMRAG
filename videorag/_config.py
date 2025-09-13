@@ -1,7 +1,7 @@
 # videorag/_config.py
 # This file holds shared, static configuration variables to prevent circular imports.
 
-MINICPM_MODEL_PATH = "/root/.cache/modelscope/hub/models/OpenBMB/MiniCPM-V-4-int4"
+MINICPM_MODEL_PATH = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5"
 
 # --- Frame refinement / de-dup config defaults ---
 # 感知哈希汉明距离阈值（越小越严格）

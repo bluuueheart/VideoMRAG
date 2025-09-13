@@ -8,7 +8,7 @@ from ._config import (
     DEDUP_DEBUG,
     FRAME_COUNT_MAPPING_EXTENDED,
 )
-from ._llm import ollama_refiner_func, get_default_ollama_chat_model, internvl_refiner_func
+from ._llm import external_llm_refiner_func, get_default_external_llm_chat_model, internvl_refiner_func, MODEL_NAME_TO_LOCAL_PATH
 from .refine_frames_utils import (
     _map_score_to_frames,
     _ir_average_hash,
@@ -38,10 +38,11 @@ class IterativeRefiner:
         except Exception:
             do_warm = True
         if do_warm:
-            model_name = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_ollama_chat_model()
+            model_name = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_external_llm_chat_model()
             try:
                 loop = asyncio.get_running_loop()
                 # schedule warmup in running loop
+                # If model_name maps to a local HF path, warmup via internvl_refiner_func or HF wrapper
                 loop.create_task(self._warmup(model_name))
             except RuntimeError:
                 # no running loop: start a daemon thread to run warmup
@@ -185,19 +186,28 @@ Based on the query and summaries, generate a JSON list of no more than 15 precis
 - Output a single, flat JSON list of strings.
 - Example: ["Jair Bolsonaro", "Luiz Inácio Lula da Silva", "Brazilian flag", "podium", "microphone", "election banner", "voting poll chart"]
 """
-        refiner_model = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_ollama_chat_model()
+        refiner_model = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_external_llm_chat_model()
 
         # 并发与超时控制：避免 keyword 生成长时间阻塞主流程
         timeout_sec = float(os.environ.get("REFINER_KEYWORD_TIMEOUT", "30"))
         try:
-            if "internvl" in (refiner_model or "").lower():
-                response_str = await asyncio.wait_for(
-                    internvl_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec
-                )
-            else:
-                response_str = await asyncio.wait_for(
-                    ollama_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec
-                )
+            # Prefer local router when short-name maps to local model
+            short = (refiner_model or "").split(":", 1)[0].lower()
+            try:
+                from ._llm import MODEL_NAME_TO_LOCAL_PATH, local_complete_router
+                if short in (MODEL_NAME_TO_LOCAL_PATH or {}):
+                    response_str = await asyncio.wait_for(local_complete_router(short, prompt=prompt), timeout=timeout_sec)
+                elif "internvl" in (refiner_model or "").lower():
+                    response_str = await asyncio.wait_for(internvl_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec)
+                else:
+                    response_str = await asyncio.wait_for(external_llm_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec)
+            except Exception:
+                # fallback to original behaviour
+                if "internvl" in (refiner_model or "").lower():
+                    response_str = await asyncio.wait_for(internvl_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec)
+                else:
+                    response_str = await asyncio.wait_for(external_llm_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec)
+
             # Robustly parse the JSON list from the response
             start = response_str.find('[')
             end = response_str.rfind(']')
@@ -209,7 +219,7 @@ Based on the query and summaries, generate a JSON list of no more than 15 precis
             print(f"[Refine-KeywordGen][Timeout] > {timeout_sec}s, fallback to heuristic extraction.")
         except Exception as e:
             print(f"[Refine-KeywordGen] Failed to generate or parse keywords: {e}")
-        
+
         # Fallback to simple extraction if LLM fails
         from ._videoutil.refinement_utils import extract_keyword_queries_from_query
         return extract_keyword_queries_from_query(query)
@@ -220,10 +230,20 @@ Based on the query and summaries, generate a JSON list of no more than 15 precis
             probe_prompt = "Please respond with a short JSON: {\"warm\": true}."
             # Use a small timeout for warmup but tolerate failure
             try:
-                if "internvl" in (model_name or "").lower():
-                    await asyncio.wait_for(internvl_refiner_func(model_name=model_name, prompt=probe_prompt), timeout=10)
-                else:
-                    await asyncio.wait_for(ollama_refiner_func(model_name=model_name, prompt=probe_prompt), timeout=10)
+                short = (model_name or "").split(":", 1)[0].lower()
+                try:
+                    from ._llm import MODEL_NAME_TO_LOCAL_PATH, local_complete_router
+                    if short in (MODEL_NAME_TO_LOCAL_PATH or {}):
+                        await asyncio.wait_for(local_complete_router(short, prompt=probe_prompt), timeout=10)
+                    elif "internvl" in (model_name or "").lower():
+                        await asyncio.wait_for(internvl_refiner_func(model_name=model_name, prompt=probe_prompt), timeout=10)
+                    else:
+                        await asyncio.wait_for(external_llm_refiner_func(model_name=model_name, prompt=probe_prompt), timeout=10)
+                except Exception:
+                    if "internvl" in (model_name or "").lower():
+                        await asyncio.wait_for(internvl_refiner_func(model_name=model_name, prompt=probe_prompt), timeout=10)
+                    else:
+                        await asyncio.wait_for(external_llm_refiner_func(model_name=model_name, prompt=probe_prompt), timeout=10)
                 self._warmed = True
                 print(f"[Refiner][Warmup] model={model_name} warmup succeeded")
             except asyncio.TimeoutError:
@@ -325,7 +345,7 @@ STRICT OUTPUT RULES (MANDATORY):
         prompt = self._build_evaluation_prompt(query, context)
         timeout_sec = float(self.config.get("refiner_timeout_seconds") or os.environ.get("REFINER_TIMEOUT_SECONDS", "90"))
         fallback_mode = os.environ.get("REFINER_TIMEOUT_FALLBACK", "final").lower()
-        refiner_model = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_ollama_chat_model()
+    refiner_model = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_external_llm_chat_model()
 
         # Warm-up on first real evaluation to preload model weights (avoids first-call stall)
         try:
@@ -342,7 +362,7 @@ STRICT OUTPUT RULES (MANDATORY):
         async def _call_model():
             if "internvl" in (refiner_model or "").lower():
                 return await internvl_refiner_func(model_name=refiner_model, prompt=prompt, images_base64=None)
-            return await ollama_refiner_func(model_name=refiner_model, prompt=prompt, images_base64=None)
+            return await external_llm_refiner_func(model_name=refiner_model, prompt=prompt, images_base64=None)
 
         t0 = time.time()
         try:

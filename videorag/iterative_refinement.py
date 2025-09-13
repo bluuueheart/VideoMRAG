@@ -286,8 +286,17 @@ async def refine_context(
                 print("[Refine] Step 2a: DET required. Pre-loading YOLO-World model...")
                 try:
                     from ultralytics import YOLO
-                    model_path = '/root/autodl-tmp/yolov8m-worldv2.pt'
-                    if not os.path.exists(model_path):
+                    # Prefer environment variable, fallback to mapping from _llm (if available)
+                    model_path = os.environ.get("YOLOWORLD_MODEL_PATH", "")
+                    if not model_path:
+                        # try to import mapping from _llm
+                        try:
+                            from ._llm import MODEL_NAME_TO_LOCAL_PATH as _map
+                            model_path = _map.get("yolov8m-worldv2", "") or _map.get("yolov8m-worldv2.pt", "")
+                        except Exception:
+                            model_path = ""
+
+                    if not model_path or not os.path.exists(model_path):
                         print(f"[Refine-DET][ERROR] Model not found at {model_path}. Skipping DET.")
                         det_params = False
                     else:

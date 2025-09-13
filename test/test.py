@@ -45,7 +45,7 @@ def _ensure_repo_root_on_syspath():
 _ensure_repo_root_on_syspath()
 
 from videorag.iterative_refinement import refine_context, IterativeRefiner
-from videorag._llm import get_default_ollama_chat_model
+from videorag._llm import get_default_external_llm_chat_model as get_default_ollama_chat_model
 
 from video_urls import video_urls_multi_segment
 from test_media_utils import (
@@ -130,9 +130,12 @@ async def batch_main():
     # ---- Initialize models ----
     print("[ASR] Loading faster-whisper model...")
     # Allow env override; else use repo_root/faster-distil-whisper-large-v3
+    # Prefer explicit environment overrides; else default to user-provided shared model location or repo fallback
     asr_model_path = (
         os.environ.get("FASTER_WHISPER_DIR")
         or os.environ.get("ASR_MODEL_PATH")
+        or os.environ.get("DEFAULT_ASR_MODEL_PATH")
+        or "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
         or os.path.join(repo_root, "faster-distil-whisper-large-v3")
     )
     if not os.path.exists(asr_model_path):
@@ -170,7 +173,8 @@ async def batch_main():
 
     # ---- Batch Processing ----
     # 优先环境变量，其次默认路径；支持命令行传入文件或目录
-    input_base_dir = os.environ.get("INPUT_BASE_DIR") or "/root/autodl-tmp/903test"
+    # 改为读取用户指定的 Data 目录（包含 query 与 top5_segments 的 JSON）
+    input_base_dir = os.environ.get("INPUT_BASE_DIR") or "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Data"
     single_json_file: str | None = None
     if args.file:
         user_path = os.path.abspath(args.file)
@@ -182,23 +186,34 @@ async def batch_main():
     force_rerun = args.force or (os.environ.get("FORCE_RERUN", "").strip().lower() in {"1", "true", "yes"})
 
     def _infer_model_tag(model_name: str) -> str:
-        name = (model_name or "").lower()
-        if "internvl" in name:
-            return "InternVL"
-        if "qwen" in name:
-            return "qwen"
-        if "llama" in name:
-            return "llama"
-        if "gemma" in name:
-            return "gemma"
-        if "llama" in name:
-            return "llama"
-        if "minicpm" in name or "openbmb/minicpm" in name:
-            return "minicpm"
-        # fallback: use prefix before ':' or whole name sanitized
-        return (name.split(":", 1)[0] or "misc").replace("/", "_")
+        name = (model_name or "").strip()
+        lname = name.lower()
+        try:
+            from videorag._llm import MODEL_NAME_TO_LOCAL_PATH
+        except Exception:
+            MODEL_NAME_TO_LOCAL_PATH = {}
 
-    # Determine active Ollama chat model and route outputs to a model-specific subfolder
+        for k in (MODEL_NAME_TO_LOCAL_PATH or {}).keys():
+            if k and k in lname:
+                return k
+
+        # fallback heuristics
+        if "internvl" in lname:
+            return "internvl"
+        if "qwen" in lname:
+            return "qwen"
+        if "llama" in lname:
+            return "llama"
+        if "gemma" in lname:
+            return "gemma"
+        if "minicpm" in lname:
+            return "minicpm"
+        base = lname.split(":", 1)[0]
+        if "/" in base or "\\" in base:
+            base = base.replace("\\", "/").rstrip("/").split("/")[-1]
+        return (base or "misc").replace("/", "_")
+
+    # Determine active chat model (shortname or path) and route outputs to a model-specific subfolder
     active_chat_model = os.environ.get("OLLAMA_CHAT_MODEL", "").strip() or get_default_ollama_chat_model()
     model_tag = _infer_model_tag(active_chat_model)
     
@@ -207,7 +222,16 @@ async def batch_main():
         model_tag = f"{model_tag}_base"
         print(f"[LLM] Base mode active. Output will be saved under directory tag: {model_tag}")
 
-    output_base_dir = f"/root/autodl-tmp/Result/{model_tag}"
+    # Allow override via OUTPUT_BASE_DIR; else use target user's Result path
+    env_out = os.environ.get("OUTPUT_BASE_DIR")
+    if env_out:
+        # Ensure env_out ends with the model_tag subdirectory for per-model separation
+        if os.path.basename(os.path.normpath(env_out)) != model_tag:
+            output_base_dir = os.path.join(env_out, model_tag)
+        else:
+            output_base_dir = env_out
+    else:
+        output_base_dir = f"/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result/{model_tag}"
     current_mode = "base" if args.base_mode else "refine"
     
     # 如果目录不存在，不要在这里抛错；允许走顶层 JSON 模式/单文件模式
@@ -288,7 +312,6 @@ async def batch_main():
         for json_file_path in json_files:
             norm_path = os.path.abspath(json_file_path)
             if norm_path in processed_json_files:
-                # 已处理过
                 continue
             processed_json_files.add(norm_path)
 
@@ -300,23 +323,31 @@ async def batch_main():
                 print(f"Error reading JSON {norm_path}: {e}")
                 continue
 
-            # 仅处理包含 query + top5_segment_names 的结构
-            if not (isinstance(qa_data, dict) and 'query' in qa_data and 'top5_segment_names' in qa_data):
-                print(f"[Skip] Not a 'query+top5_segment_names' JSON: {json_file_path}")
+            # 仅处理包含 query + top5_segments 的结构（支持 query_id）
+            if not (isinstance(qa_data, dict) and 'query' in qa_data and 'top5_segments' in qa_data):
+                print(f"[Skip] Not a 'query+top5_segments' JSON: {json_file_path}")
                 continue
 
             # 规范化问题文本
             question = normalize_question_text(qa_data.get('query', ''))
 
-            # 根据 top5 构建 segment -> url 映射
-            segment_urls = _build_segment_urls_from_top5(qa_data.get('top5_segment_names') or [])
+            # 根据 top5_segments 构建 segment -> url 映射
+            segment_urls = _build_segment_urls_from_top5(qa_data.get('top5_segments') or [])
             if not segment_urls:
                 print(f"[Skip] No resolvable segments in {json_file_path}")
                 continue
 
-            # 输出位置
-            relative_path = os.path.basename(json_file_path) if single_json_file else os.path.relpath(json_file_path, input_base_dir)
-            output_file_path = os.path.join(output_base_dir, relative_path)
+            # 输出位置：使用 query_id.json 保存结果，若缺失则回退到原文件名
+            qid = qa_data.get('query_id')
+            if qid is None:
+                relative_path = os.path.basename(json_file_path) if single_json_file else os.path.relpath(json_file_path, input_base_dir)
+                output_file_path = os.path.join(output_base_dir, relative_path)
+            else:
+                rel_dir = os.path.dirname(os.path.relpath(json_file_path, input_base_dir)) if not single_json_file else ""
+                if rel_dir in (".", ""):
+                    output_file_path = os.path.join(input_base_dir, f"{qid}.json")
+                else:
+                    output_file_path = os.path.join(input_base_dir, rel_dir, f"{qid}.json")
             failure_log_path = output_file_path + ".failures.jsonl"
 
             # 读取已存在结果以便 resume
@@ -345,7 +376,7 @@ async def batch_main():
             def append_failure_top(idx: int, question_text: str, err: Exception):
                 rec = {
                     "video_id": "_top5_mode_",
-                    "result_rel_path": relative_path,
+                    "result_rel_path": os.path.relpath(json_file_path, input_base_dir) if input_base_dir else os.path.basename(json_file_path),
                     "index": idx,
                     "question": question_text,
                     "error": str(err),
@@ -379,6 +410,7 @@ async def batch_main():
                 )
                 clean_ans = extract_final_answer(answer_obj.get("answer", ""))
                 output_data = ([] if force_rerun else existing_results[:]) + [{"question": question, "answer": clean_ans, "mode": current_mode}]
+                os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
                 with open(output_file_path, "w", encoding="utf-8") as f:
                     json.dump(output_data, f, ensure_ascii=False, indent=2)
             except Exception as err:
