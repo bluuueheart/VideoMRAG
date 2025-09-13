@@ -1,0 +1,89 @@
+# -------------------------------------------------------------------
+# Core ML/DL Frameworks
+# 核心机器学习/深度学习框架
+# -------------------------------------------------------------------
+torch==2.3.1
+torchvision==0.18.1
+torchaudio==2.3.1
+transformers==4.56.0
+accelerate==1.10.1
+bitsandbytes==0.43.1
+timm==1.0.19
+einops==0.8.1
+safetensors==0.6.2
+
+# -------------------------------------------------------------------
+# Vision, Video & Audio Processing
+# 视觉、视频与音频处理
+# -------------------------------------------------------------------
+opencv-python==4.12.0.88
+pytorchvideo==0.1.5
+av==12.3.0
+easyocr==1.7.1
+ultralytics==8.3.190
+faster-whisper==1.0.3
+imagebind==0.1.0
+scikit-image==0.25.2
+Pillow==11.3.0
+
+# -------------------------------------------------------------------
+# Embedding, Vector Search & NLP Tools
+# 向量嵌入、相似度搜索与自然语言处理工具
+# -------------------------------------------------------------------
+sentence-transformers==2.6.1
+hnswlib==0.8.0
+nltk==3.9.1
+tokenizers==0.22.0
+sentencepiece==0.2.1
+gensim==4.3.3
+
+# -------------------------------------------------------------------
+# Model Hubs & Utilities
+# 模型中心与相关工具
+# -------------------------------------------------------------------
+huggingface-hub==0.34.4
+modelscope==1.29.2
+openai==1.99.9
+
+# -------------------------------------------------------------------
+# Data Science & General Libraries
+# 数据科学与通用库
+# -------------------------------------------------------------------
+numpy==1.26.4
+pandas==2.3.2
+scikit-learn==1.7.1
+scipy==1.12.0
+matplotlib==3.10.5
+seaborn==0.13.2
+tqdm==4.67.1
+PyYAML==6.0.2
+networkx==3.5
+
+# -------------------------------------------------------------------
+# Evaluation Metrics
+# 评估指标
+# -------------------------------------------------------------------
+bert-score==0.3.13
+rouge-score==0.1.2
+
+# -------------------------------------------------------------------
+# Other Specific Dependencies
+# 其他特定依赖
+# -------------------------------------------------------------------
+triton==2.3.1
+pydantic==2.11.7
+moviepy==1.0.3
+onnxruntime==1.22.1
+ctranslate2==4.4.0
+
+# These packages are imported conditionally in the code base; verify before pinning versions.
+tiktoken
+httpx
+tenacity
+ollama
+neo4j
+xxhash
+graspologic
+ImageHash
+# Vector DB client referenced as `nano_vectordb` in code. Confirm PyPI name before pinning.
+nano-vectordb
