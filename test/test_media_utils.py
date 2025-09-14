@@ -3,6 +3,7 @@ import subprocess
 import urllib
 import shutil
 import glob
+import time
 from PIL import Image
 import numpy as np
 
@@ -17,12 +18,32 @@ def download_file(url: str, target_dir: str) -> str:
         print(f"[Download] File already exists: {filepath}")
         return filepath
     print(f"[Download] Downloading {url} to {filepath}")
-    try:
-        urllib.request.urlretrieve(url, filepath)
-        return filepath
-    except Exception as e:
-        print(f"[Download] Error downloading {url}: {e}")
-        return ""
+    # Try a few times for transient network issues
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # Use urlopen with a timeout to get clearer exceptions
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                # Stream to file
+                with open(filepath, 'wb') as f:
+                    shutil.copyfileobj(resp, f)
+            return filepath
+        except Exception as e:
+            # Provide more actionable message for DNS/network errors
+            msg = str(e)
+            if 'Name or service not known' in msg or 'Temporary failure in name resolution' in msg:
+                print(f"[Download][Attempt {attempt}/{max_attempts}] DNS/network error for {url}: {e}")
+            else:
+                print(f"[Download][Attempt {attempt}/{max_attempts}] Error downloading {url}: {e}")
+            # On last attempt, return empty string
+            if attempt == max_attempts:
+                print(f"[Download] Failed after {max_attempts} attempts: {url}")
+                return ""
+            # small backoff
+            try:
+                time.sleep(2 * attempt)
+            except Exception:
+                pass
 
 
 def get_video_resolution(video_path: str) -> tuple[int, int] | None:

@@ -13,7 +13,10 @@ except Exception:  # pragma: no cover
 
 # ---------------- Config ----------------
 # Default input base dir (changed from autodl default to provided Data directory)
-INPUT_BASE_DIR = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Data"
+# Prefer mounted /mnt location when available (containers/shared storage), else fall back to /home
+_mnt_input_candidate = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Data"
+_home_input_candidate = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Data"
+INPUT_BASE_DIR = os.environ.get("INPUT_BASE_DIR") or (_mnt_input_candidate if os.path.isdir(_mnt_input_candidate) else _home_input_candidate)
 
 def _infer_model_tag(model_name: str) -> str:
     name = (model_name or "").strip()
@@ -41,16 +44,21 @@ def _infer_model_tag(model_name: str) -> str:
     return (base or "misc").replace("/", "_")
 
 _active_chat_model = os.environ.get("OLLAMA_CHAT_MODEL", "").strip() or get_default_ollama_chat_model()
-OUTPUT_BASE_DIR = f"/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result/{_infer_model_tag(_active_chat_model)}"
-# New: scan all result jsons under the Result root
-OUTPUT_ROOT_DIR = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result"
-# Ground-truth data root (for question-based lookup)
-DATA_ROOT_DIR = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Benchmark"
+OUTPUT_BASE_DIR = os.environ.get("OUTPUT_BASE_DIR") or f"/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result/{_infer_model_tag(_active_chat_model)}"
+# New: scan all result jsons under the Result root; prefer /mnt if present
+_mnt_result_candidate = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Result"
+_home_result_candidate = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result"
+OUTPUT_ROOT_DIR = os.environ.get("OUTPUT_ROOT_DIR") or (_mnt_result_candidate if os.path.isdir(_mnt_result_candidate) else _home_result_candidate)
+OUTPUT_BASE_DIR = os.environ.get("OUTPUT_BASE_DIR") or f"/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Result/{_infer_model_tag(_active_chat_model)}"
+_mnt_benchmark_candidate = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Benchmark"
+_home_benchmark_candidate = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Benchmark"
+DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR") or (_mnt_benchmark_candidate if os.path.isdir(_mnt_benchmark_candidate) else _home_benchmark_candidate)
 
 # Default local caches to the provided shared lx directory
 DEFAULT_EXTERNAL_MODELS_DIR = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/llm_models"
 DEFAULT_HF_HOME = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/huggingface"
-os.environ.setdefault("LLM_MODELS_DIR", DEFAULT_EXTERNAL_MODELS_DIR)
+DEFAULT_EXTERNAL_MODELS_DIR = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/llm_models"
+DEFAULT_HF_HOME = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/huggingface"
 os.environ.setdefault("OLLAMA_MODELS", DEFAULT_EXTERNAL_MODELS_DIR)  # kept for backward compatibility
 os.environ.setdefault("HF_HOME", DEFAULT_HF_HOME)
 os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(DEFAULT_HF_HOME, "hub"))
@@ -64,7 +72,7 @@ EVAL_LLM_MODEL = os.environ.get("EVAL_LLM_MODEL", "qwen3:8b")
 # Always use a fast and reliable model for evaluation (kept name for downstream compatibility)
 OLLAMA_MODEL = EVAL_LLM_MODEL
 # Prefer locally-downloaded ModelScope roberta-base if available
-MODELSCOPE_BASE_DIR = os.environ.get("MODELSCOPE_CACHE_DIR", "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Model")
+MODELSCOPE_BASE_DIR = os.environ.get("MODELSCOPE_CACHE_DIR") or ("/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Model" if os.path.isdir("/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Model") else "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Model")
 MODELSCOPE_ROBERTA_DIR = os.environ.get(
     "MODELSCOPE_ROBERTA_DIR",
     os.path.join(MODELSCOPE_BASE_DIR, "AI-ModelScope", "roberta-base"),

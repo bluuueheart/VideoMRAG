@@ -85,10 +85,10 @@
   python test/test.py --force
 
   # 若需要指定环境变量（示例，Linux/bash）
-  export FASTER_WHISPER_DIR=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5
-  export MINICPM_MODEL_PATH=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5
-  export YOLOWORLD_MODEL_PATH=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt
-  export OUTPUT_BASE_DIR=/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result
+  export FASTER_WHISPER_DIR=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5
+  export MINICPM_MODEL_PATH=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5
+  export YOLOWORLD_MODEL_PATH=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt
+  export OUTPUT_BASE_DIR=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Result
   python test/test.py --force
   ```
 

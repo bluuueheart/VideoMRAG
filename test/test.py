@@ -189,7 +189,15 @@ async def batch_main():
     # ---- Batch Processing ----
     # 优先环境变量，其次默认路径；支持命令行传入文件或目录
     # 改为读取用户指定的 Data 目录（包含 query 与 top5_segments 的 JSON）
-    input_base_dir = os.environ.get("INPUT_BASE_DIR") or "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Data"
+    # 优先使用已挂载的 /mnt 路径（容器/共享存储），否则回退到原来的 /home 路径；允许环境变量覆盖
+    input_base_dir = os.environ.get("INPUT_BASE_DIR")
+    if not input_base_dir:
+        mnt_candidate = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Data"
+        home_candidate = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Data"
+        if os.path.isdir(mnt_candidate):
+            input_base_dir = mnt_candidate
+        else:
+        input_base_dir = home_candidate
     single_json_file: str | None = None
     if args.file:
         user_path = os.path.abspath(args.file)
@@ -246,7 +254,7 @@ async def batch_main():
         else:
             output_base_dir = env_out
     else:
-        output_base_dir = f"/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Result/{model_tag}"
+    output_base_dir = f"/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Result/{model_tag}"
     current_mode = "base" if args.base_mode else "refine"
     
     # 如果目录不存在，不要在这里抛错；允许走顶层 JSON 模式/单文件模式

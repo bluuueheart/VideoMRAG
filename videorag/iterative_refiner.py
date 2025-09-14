@@ -217,7 +217,12 @@ Based on the query and summaries, generate a JSON list of no more than 15 precis
             try:
                 from ._llm import MODEL_NAME_TO_LOCAL_PATH, local_complete_router
                 if short in (MODEL_NAME_TO_LOCAL_PATH or {}):
-                    response_str = await asyncio.wait_for(local_complete_router(short, prompt=prompt), timeout=timeout_sec)
+                    p = MODEL_NAME_TO_LOCAL_PATH.get(short)
+                    if not p or not os.path.exists(p):
+                        print(f"[Refine-KeywordGen][Warning] Local model path for '{short}' missing or not found: {p}. Falling back to external client.")
+                        response_str = await asyncio.wait_for(external_llm_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec)
+                    else:
+                        response_str = await asyncio.wait_for(local_complete_router(short, prompt=prompt), timeout=timeout_sec)
                 elif "internvl" in (refiner_model or "").lower():
                     response_str = await asyncio.wait_for(internvl_refiner_func(model_name=refiner_model, prompt=prompt), timeout=timeout_sec)
                 else:

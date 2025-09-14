@@ -62,16 +62,16 @@ DEFAULT_OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "all-MiniLM-L6
 # Mapping short names to local filesystem Hugging Face model paths (user-provided)
 # Update these paths if needed; user-specified paths from the request are used here.
 MODEL_NAME_TO_LOCAL_PATH = {
-    "llama": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct",
-    "qwen": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/Qwen/Qwen2___5-7B-Instruct",
-    "qwen3": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/Qwen/Qwen3-32B",
-    "gemma": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/google/gemma-3-12b-it",
-    "minicpm": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5",
-    "internvl": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/OpenGVLab/InternVL3_5-8B-HF",
+    "llama": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct",
+    "qwen": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/Qwen/Qwen2___5-7B-Instruct",
+    "qwen3": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/Qwen/Qwen3-32B",
+    "gemma": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/google/gemma-3-12b-it",
+    "minicpm": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5",
+    "internvl": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/OpenGVLab/InternVL3_5-8B-HF",
     # embedding model
-    "all-MiniLM-L6-v2": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/sentence-transformers/all-MiniLM-L6-v2",
+    "all-MiniLM-L6-v2": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/sentence-transformers/all-MiniLM-L6-v2",
     # YOLO-World detector binary
-    "yolov8m-worldv2": "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt",
+    "yolov8m-worldv2": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt",
 }
 
 # Cache for loaded HF text models and tokenizers
@@ -85,8 +85,23 @@ def _resolve_model_path_for_shortname(short: str) -> str | None:
     if not short:
         return None
     p = MODEL_NAME_TO_LOCAL_PATH.get(short)
+    # If configured path exists on filesystem, return it. Otherwise treat as not configured.
     if p:
-        return p
+        try:
+            # If it's a local path (absolute or relative), ensure it exists to avoid HF hub interpreting it as repo id
+            if os.path.isabs(p) or os.path.exists(p):
+                if os.path.exists(p):
+                    return p
+                # allow non-absolute but existing relative paths
+                # fallthrough to warning
+            else:
+                # If path string provided but doesn't exist, warn and treat as not configured
+                print(f"[LLM][Warning] Configured local model path for '{short}' does not exist: {p}")
+                return None
+        except Exception:
+            # On any filesystem check error, conservatively return None
+            print(f"[LLM][Warning] Unable to verify local model path for '{short}': {p}")
+            return None
     # allow qwen3 alias
     if short.startswith("qwen3") and "qwen3" in MODEL_NAME_TO_LOCAL_PATH:
         return MODEL_NAME_TO_LOCAL_PATH.get("qwen3")
@@ -99,7 +114,7 @@ async def local_complete_router(model_short_name: str, prompt: str, system_promp
     """
     path = _resolve_model_path_for_shortname(model_short_name)
     if not path:
-        raise RuntimeError(f"No local model path configured for '{model_short_name}'")
+        raise RuntimeError(f"No usable local model path configured for '{model_short_name}' (path missing or not found).")
 
     # InternVL handled separately
     if model_short_name == "internvl":
@@ -127,8 +142,18 @@ async def local_complete_router(model_short_name: str, prompt: str, system_promp
     # Transformers path
     def _transformers_sync():
         from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True, use_fast=False)
-        model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True, device_map="auto")
+        # Ensure we only call from_pretrained with a local files-only load when path is a local directory
+        from transformers import __version__ as _tf_ver
+        kwargs_tf = {"trust_remote_code": True}
+        # If path exists on filesystem, prefer local_files_only to avoid HF hub repo id parsing
+        if os.path.exists(path):
+            kwargs_tf["local_files_only"] = True
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(path, use_fast=False, **kwargs_tf)
+            model = AutoModelForCausalLM.from_pretrained(path, device_map="auto", **kwargs_tf)
+        except Exception as e:
+            # Re-raise with clearer context
+            raise RuntimeError(f"Failed to load local HF model at {path}: {e}") from e
         pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, device_map="auto")
         out = pipe(prompt if not system_prompt else f"{system_prompt}\n\n{prompt}", max_new_tokens=int(kwargs.get("max_new_tokens", 512)), do_sample=False)
         return out[0].get("generated_text") or out[0].get("text") or ""
@@ -360,6 +385,11 @@ async def hf_local_text_complete(model_short_name: str, prompt: str, system_prom
     if model_path is None:
         raise RuntimeError(f"No local path configured for model {model_short_name}")
 
+    # Verify the configured model path actually exists. If not, raise a clear error to avoid
+    # passing a filesystem path string to transformers which may treat it as a repo id.
+    if not os.path.exists(model_path):
+        raise RuntimeError(f"Configured local model path for '{model_short_name}' does not exist: {model_path}")
+
     # If this is the InternVL model, delegate to its dedicated implementation
     if model_short_name == "internvl":
         return await internvl_hf_complete(model_name=model_path, prompt=prompt, system_prompt=system_prompt, images_base64=images_base64, **kwargs)
@@ -398,8 +428,12 @@ async def hf_local_text_complete(model_short_name: str, prompt: str, system_prom
         # Load/cache model
         key = f"text::{model_path}"
         if key not in _HF_TEXT_MODELS:
-            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
-            model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, device_map="auto")
+            # Ensure local-only loading when path is local to avoid HF hub repo id interpretation
+            tf_kwargs = {"trust_remote_code": True}
+            if os.path.exists(model_path):
+                tf_kwargs["local_files_only"] = True
+            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, **tf_kwargs)
+            model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", **tf_kwargs)
             _HF_TEXT_MODELS[key] = (tokenizer, model)
         else:
             tokenizer, model = _HF_TEXT_MODELS[key]
