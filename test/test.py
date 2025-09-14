@@ -44,7 +44,8 @@ def _ensure_repo_root_on_syspath():
 
 _ensure_repo_root_on_syspath()
 
-from videorag.iterative_refinement import refine_context, IterativeRefiner
+from videorag.iterative_refinement import refine_context
+from videorag.iterative_refiner import IterativeRefiner
 from videorag._llm import get_default_external_llm_chat_model as get_default_ollama_chat_model
 
 from video_urls import video_urls_multi_segment
@@ -71,6 +72,12 @@ from test_env_utils import (
 # ---------------- Helper utilities moved to test_env_utils.py ----------------
 # --- CRITICAL: Sanitize environment BEFORE importing torch-dependent libraries ---
 sanitize_cuda_libs()
+# Ensure user-local scripts (e.g. ~/.local/bin) are on PATH to avoid pip script warnings
+try:
+    from test_env_utils import ensure_user_local_bin_in_path
+    ensure_user_local_bin_in_path()
+except Exception:
+    pass
 
 
 try:
@@ -131,38 +138,46 @@ async def batch_main():
     print("[ASR] Loading faster-whisper model...")
     # Allow env override; else use repo_root/faster-distil-whisper-large-v3
     # Prefer explicit environment overrides; else default to user-provided shared model location or repo fallback
+    # User-provided path (from your message)
+    user_model_path = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
     asr_model_path = (
         os.environ.get("FASTER_WHISPER_DIR")
         or os.environ.get("ASR_MODEL_PATH")
         or os.environ.get("DEFAULT_ASR_MODEL_PATH")
+        or user_model_path
         or "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
         or os.path.join(repo_root, "faster-distil-whisper-large-v3")
     )
     if not os.path.exists(asr_model_path):
         print(f"[ASR] Local model path not found: {asr_model_path}")
-        print("[ASR] Falling back to huggingface id 'distil-large-v3' (will download if needed)")
-        asr_model_path = "distil-large-v3"
+        allow_online = str(os.environ.get("ALLOW_HF_DOWNLOADS", "0")).lower() in {"1", "true", "yes"}
+        if allow_online:
+            print("[ASR] ALLOW_HF_DOWNLOADS=1 -> falling back to Hugging Face model id 'distil-large-v3' (will download if needed)")
+            asr_model_path = "distil-large-v3"
+        else:
+            print("[ASR] Online downloads are disabled. To allow automatic downloads set environment: ALLOW_HF_DOWNLOADS=1")
+            print("[ASR] Or set FASTER_WHISPER_DIR / ASR_MODEL_PATH to a local model folder. Aborting ASR initialization.")
+            raise SystemExit(1)
     
-    # Smart device selection: prefer CPU if CUDA_VISIBLE_DEVICES is empty, otherwise try CUDA with fallback
-    cuda_available = os.environ.get("CUDA_VISIBLE_DEVICES", "") != ""
+    # Force ASR to use GPU when CUDA devices are available
+    cuda_available = False
+    try:
+        import torch
+        cuda_available = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    except Exception:
+        cuda_available = False
+
     if cuda_available:
-        try:
-            import torch
-            cuda_available = torch.cuda.is_available() and torch.cuda.device_count() > 0
-        except ImportError:
-            cuda_available = False
-    
-    if cuda_available:
-        # Try CUDA with int8 first (more memory efficient), fallback to CPU if OOM
         try:
             asr_model = WhisperModel(asr_model_path, device="cuda", compute_type="int8")
             print("[ASR] Using CUDA with int8 precision")
         except Exception as e:
-            print(f"[ASR] CUDA failed ({e}), falling back to CPU...")
+            print(f"[ASR] CUDA initialization failed ({e}), falling back to CPU...")
             asr_model = WhisperModel(asr_model_path, device="cpu", compute_type="int8")
     else:
+        # No CUDA -> CPU
         asr_model = WhisperModel(asr_model_path, device="cpu", compute_type="int8")
-        print("[ASR] Using CPU with int8 precision")
+        print("[ASR] CUDA not available; Using CPU with int8 precision")
     
     llm_cfg = choose_llm_config()
     # Ensure VLM acceleration is enabled by default (signal to backends)

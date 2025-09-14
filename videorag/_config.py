@@ -3,6 +3,9 @@
 
 MINICPM_MODEL_PATH = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5"
 
+# YOLO-World detector model path
+YOLOWORLD_MODEL_PATH = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt"
+
 # --- Frame refinement / de-dup config defaults ---
 # 感知哈希汉明距离阈值（越小越严格）
 DEDUP_PHASH_THRESHOLD_DEFAULT = 5

@@ -1,7 +1,8 @@
 import os
 from typing import List, Dict, Any, Set
 
-from videorag.iterative_refinement import refine_context, IterativeRefiner
+from videorag.iterative_refinement import refine_context
+from videorag.iterative_refiner import IterativeRefiner
 from test_media_utils import download_file, ensure_valid_video_or_skip
 from test_env_utils import SimpleStore
 from segment_caption import generate_segment_caption

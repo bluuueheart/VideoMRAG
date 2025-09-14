@@ -24,7 +24,7 @@ from .refine_frames_utils import (
     _extract_frame_opencv,
     _interpolate_and_fill_frames,
 )
-from .iterative_refiner import IterativeRefiner
+# Delay importing IterativeRefiner to runtime to avoid heavy/recursive imports at module import time
 
 # ---------------------------------------------------------------
 # 公共: 视觉 caption token 规范化 (词形简化 + 同义合并)
@@ -104,6 +104,8 @@ async def refine_context(
     
     if plan is None:
         print("[Refine] Step 1: No pre-computed plan found. Generating a new one...")
+        # Local import to avoid circular/heavy imports at module import time
+        from .iterative_refiner import IterativeRefiner
         refiner = IterativeRefiner(config, llm_api_func=None)
         plan = await refiner.plan(query, initial_context)
         print("[Refine] Step 1: Plan generated successfully.")
@@ -289,12 +291,18 @@ async def refine_context(
                     # Prefer environment variable, fallback to mapping from _llm (if available)
                     model_path = os.environ.get("YOLOWORLD_MODEL_PATH", "")
                     if not model_path:
-                        # try to import mapping from _llm
+                        # try to import mapping from _llm, else fallback to central config
                         try:
                             from ._llm import MODEL_NAME_TO_LOCAL_PATH as _map
                             model_path = _map.get("yolov8m-worldv2", "") or _map.get("yolov8m-worldv2.pt", "")
                         except Exception:
                             model_path = ""
+                        if not model_path:
+                            try:
+                                from ._config import YOLOWORLD_MODEL_PATH
+                                model_path = YOLOWORLD_MODEL_PATH
+                            except Exception:
+                                pass
 
                     if not model_path or not os.path.exists(model_path):
                         print(f"[Refine-DET][ERROR] Model not found at {model_path}. Skipping DET.")
@@ -335,6 +343,7 @@ async def refine_context(
 
             if det_params and det_model:
                 print("[Refine] Step 2c: DET required. Generating smart visual keywords with LLM...")
+                from .iterative_refiner import IterativeRefiner
                 refiner = IterativeRefiner(config, llm_api_func=None)
                 det_keywords = await refiner._generate_visual_keywords(query, initial_context)
                 print(f"[Refine] Step 2c: Keywords generated: {det_keywords}. Running YOLO-World detection...")

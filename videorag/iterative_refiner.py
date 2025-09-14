@@ -8,7 +8,26 @@ from ._config import (
     DEDUP_DEBUG,
     FRAME_COUNT_MAPPING_EXTENDED,
 )
-from ._llm import external_llm_refiner_func, get_default_external_llm_chat_model, internvl_refiner_func, MODEL_NAME_TO_LOCAL_PATH
+try:
+    from ._llm import (
+        external_llm_refiner_func,
+        get_default_external_llm_chat_model,
+        internvl_refiner_func,
+        MODEL_NAME_TO_LOCAL_PATH,
+    )
+except Exception:
+    # Allow the module to be imported in environments missing heavy deps (e.g. torch).
+    # Runtime callers should handle missing implementations appropriately.
+    def external_llm_refiner_func(*args, **kwargs):
+        raise RuntimeError("external_llm_refiner_func is unavailable (missing dependencies)")
+
+    def get_default_external_llm_chat_model(*args, **kwargs):
+        return ""
+
+    def internvl_refiner_func(*args, **kwargs):
+        raise RuntimeError("internvl_refiner_func is unavailable (missing dependencies)")
+
+    MODEL_NAME_TO_LOCAL_PATH = {}
 from .refine_frames_utils import (
     _map_score_to_frames,
     _ir_average_hash,
@@ -47,11 +66,13 @@ class IterativeRefiner:
             except RuntimeError:
                 # no running loop: start a daemon thread to run warmup
                 import threading
+
                 def _bg():
                     try:
                         asyncio.run(self._warmup(model_name))
-                    except Exception as _:
+                    except Exception:
                         pass
+
                 t = threading.Thread(target=_bg, daemon=True)
                 t.start()
 
@@ -327,7 +348,7 @@ Example (output a single JSON object (no extra text/markdown) ):
 STRICT OUTPUT RULES (MANDATORY):
 1. Output ONLY one JSON object. No explanations, no markdown fences.
 2. All keys and all string values MUST be enclosed in double quotes.
-3. Do NOT escape underscore '_' (never produce \_).
+3. Do NOT escape underscore '_' (never produce _).
 4. If `temporal_sequence_incomplete` is true, `temporal_focus_clip_id` MUST be a valid existing clip id; if `numeric_evidence_required` is true, `numeric_focus_clip_id` MUST be a valid existing clip id; otherwise it MUST be an empty string.
 5. Strictly follow the fields output in the example.
 6. No extra fields.
@@ -345,7 +366,7 @@ STRICT OUTPUT RULES (MANDATORY):
         prompt = self._build_evaluation_prompt(query, context)
         timeout_sec = float(self.config.get("refiner_timeout_seconds") or os.environ.get("REFINER_TIMEOUT_SECONDS", "90"))
         fallback_mode = os.environ.get("REFINER_TIMEOUT_FALLBACK", "final").lower()
-    refiner_model = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_external_llm_chat_model()
+        refiner_model = os.environ.get("REFINER_OLLAMA_MODEL", "").strip() or get_default_external_llm_chat_model()
 
         # Warm-up on first real evaluation to preload model weights (avoids first-call stall)
         try:
@@ -459,8 +480,8 @@ STRICT OUTPUT RULES (MANDATORY):
                 lines = [ln for ln in txt.splitlines() if not ln.strip().startswith("```")]
                 txt = "\n".join(lines)
             txt = re.sub(r'\\([^"\\/bfnrtu])', r'\1', txt)
-            txt = re.sub(r'([{"\s,])-\s*"', r'\1"', txt)
-            txt = re.sub(r'([{"\s,])-\s*([a-zA-Z_])', r'\1"\2', txt)
+            txt = re.sub(r'([{"\s,])\-\s*"', r'\1"', txt)
+            txt = re.sub(r'([{"\s,])\-\s*([a-zA-Z_])', r'\1"\2', txt)
             def _fix_clip_id(m):
                 val = m.group(1) or m.group(2)
                 return f'"clip_id": "{val}"'
