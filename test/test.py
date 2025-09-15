@@ -679,13 +679,17 @@ async def batch_main():
 
     if gpu_list and video_id_dirs:
         procs = []
+        print(f"[Batch] GPU list: {gpu_list}")
+        print(f"[Batch] Model overrides: {model_overrides}")
         for idx, video_id in enumerate(video_id_dirs):
             assigned_gpu = gpu_list[idx % len(gpu_list)]
             env = os.environ.copy()
             env['CUDA_VISIBLE_DEVICES'] = assigned_gpu
             # If user provided model override for this GPU, set OLLAMA_CHAT_MODEL for the child
+            child_model = None
             if assigned_gpu in model_overrides:
-                env['OLLAMA_CHAT_MODEL'] = model_overrides[assigned_gpu]
+                child_model = model_overrides[assigned_gpu]
+                env['OLLAMA_CHAT_MODEL'] = child_model
             # Always enable VLM_ACCEL for child workers by default
             env['VLM_ACCEL'] = '1'
             # Launch child process to handle single video directory; pass the directory as --file
@@ -694,6 +698,8 @@ async def batch_main():
                 cmd.append('--force')
             if args.base_mode:
                 cmd.append('--base-mode')
+            # Debug print for each child
+            print(f"[Batch] Spawning worker idx={idx} for video_id={video_id} -> CUDA_VISIBLE_DEVICES={assigned_gpu}, OLLAMA_CHAT_MODEL={child_model}")
             p = subprocess.Popen(cmd, env=env)
             procs.append(p)
 

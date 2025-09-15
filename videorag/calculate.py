@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-按文件夹聚合 /root/autodl-tmp/Result/<子文件夹> 下所有 JSON 文件的结果，计算：
+按文件夹聚合 <RESULT_BASE>/Result/<子文件夹> 下所有 JSON 文件的结果，计算：
 - recall(video)   = sum(covered_video_keypoints) / sum(videokeypoints or gt_video_n)
 - recall(text)    = sum(covered_text_keypoints) / sum(textkeypoints or gt_text_n)
 - recall(all)     = (sum(covered_video_keypoints)+sum(covered_text_keypoints)) / (sum(video)+sum(text))
@@ -12,7 +12,8 @@
 
 使用：
     python compute_result_metrics.py --base <RESULT_BASE> --out metrics.csv
-    # 默认会从统一配置 `videorag._config` 的 `get_root_prefix()` 派生（或使用环境变量 `RESULT_BASE` 覆盖）
+    # 默认会从统一配置 `videorag._config.get_root_prefix()` 派生 `RESULT_BASE`，
+    # 或者通过环境变量 `RESULT_BASE` 显式覆盖
 
 说明：
 - JSON 文件为列表或单条记录，字段兼容：

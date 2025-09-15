@@ -9,9 +9,10 @@ import os
 # If unset, detection will prefer mounted /mnt then local /home.
 _CACHED_ROOT_PREFIX = None
 # Optional manual override: you may directly edit this variable in-place (or set env ROOT_PREFIX)
-# 服务器目录：/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/
-# 本地目录：/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/
-ROOT_PREFIX_OVERRIDE = '/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/'
+# 服务器目录示例：/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/
+# 本地目录示例：/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/
+# By default leave unset to prefer environment or auto-detection.
+ROOT_PREFIX_OVERRIDE = ''
 
 def get_root_prefix() -> str:
     global _CACHED_ROOT_PREFIX
