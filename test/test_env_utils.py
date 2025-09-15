@@ -90,39 +90,6 @@ def sanitize_cuda_libs():
         print(f"[Env] A critical error occurred during LD_LIBRARY_PATH sanitization: {e}")
 
 
-def ensure_user_local_bin_in_path(user_bin_path: str | None = None):
-    """Ensure a user-local bin directory (e.g. ~/.local/bin) is on PATH.
-
-    This reduces warnings after `pip install --user` where console scripts
-    are placed into the user's local bin directory that may not be on PATH.
-    If the directory exists and is not in PATH, prepend it and print a notice.
-    """
-    try:
-        # Default to current user's ~/.local/bin if not explicitly provided
-        if not user_bin_path:
-            user_bin_path = os.path.expanduser("~/.local/bin")
-        if user_bin_path and os.path.isdir(user_bin_path):
-            cur_path = os.environ.get("PATH", "")
-            parts = cur_path.split(os.pathsep) if cur_path else []
-            if user_bin_path not in parts:
-                # Prepend to PATH to prefer user-installed scripts
-                new_path = os.pathsep.join([user_bin_path] + parts)
-                os.environ["PATH"] = new_path
-                print(f"[Env] Added user local bin to PATH: {user_bin_path}")
-        else:
-            # Attempt the hard-coded common path used in logs
-            fallback = "/home/hadoop-aipnlp/.local/bin"
-            if os.path.isdir(fallback):
-                cur_path = os.environ.get("PATH", "")
-                parts = cur_path.split(os.pathsep) if cur_path else []
-                if fallback not in parts:
-                    os.environ["PATH"] = os.pathsep.join([fallback] + parts)
-                    print(f"[Env] Added user local bin to PATH: {fallback}")
-    except Exception:
-        # Non-fatal; just skip
-        pass
-
-
 def check_dependencies():
     missing = []
     optional = []

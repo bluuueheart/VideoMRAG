@@ -57,8 +57,18 @@ async def process_question(query: str, segment_urls: Dict[str, str], work_dir: s
     # 当 base_mode 为 True 时，后续提取的帧会统一缩放到 480x360 以压缩传输体积
     fs_force = (480, 360) if base_mode else None
 
+    # Local benchmark directory override: if env var BENCHMARK_VIDEO_DIR is set
+    # (or default path), prefer reading pre-downloaded full videos named <video_name>.mp4
+    bench_dir = os.environ.get('BENCHMARK_VIDEO_DIR', '/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/KAI/gaojinpeng02/lx/huggingface.co/datasets/Xingonearth/Benckmark_video/BenchmarkVideo_new')
     for segment_id, url in segment_urls.items():
-        vp = download_file(url, work_dir)
+        # Try to infer video file name from segment id (video_name from timing parser)
+        video_name_guess, _, _ = _parse_segment_timing(segment_id)
+        local_path = os.path.join(bench_dir, f"{video_name_guess}.mp4")
+        if os.path.exists(local_path):
+            vp = local_path
+            print(f"[Local] Using local video for {segment_id}: {vp}")
+        else:
+            vp = download_file(url, work_dir)
         if not vp:
             continue
         vp = ensure_valid_video_or_skip(url, work_dir, vp)
@@ -160,7 +170,14 @@ async def process_question(query: str, segment_urls: Dict[str, str], work_dir: s
                 if not nid or nid in {s['id'] for s in all_segment_data}: continue
                 url = segment_urls.get(nid)
                 if not url: continue
-                vp2 = download_file(url, work_dir)
+                # neighbor segments: same local-first logic
+                _vn_guess, _, _ = _parse_segment_timing(nid)
+                local_path2 = os.path.join(bench_dir, f"{_vn_guess}.mp4")
+                if os.path.exists(local_path2):
+                    vp2 = local_path2
+                    print(f"[Local] Using local neighbor video for {nid}: {vp2}")
+                else:
+                    vp2 = download_file(url, work_dir)
                 if not vp2: continue
                 vp2 = ensure_valid_video_or_skip(url, work_dir, vp2)
                 if not vp2: continue
@@ -189,7 +206,13 @@ async def process_question(query: str, segment_urls: Dict[str, str], work_dir: s
                 if not nid or nid in {s['id'] for s in all_segment_data}: continue
                 url = segment_urls.get(nid)
                 if not url: continue
-                vp2 = download_file(url, work_dir)
+                _vn_guess, _, _ = _parse_segment_timing(nid)
+                local_path2 = os.path.join(bench_dir, f"{_vn_guess}.mp4")
+                if os.path.exists(local_path2):
+                    vp2 = local_path2
+                    print(f"[Local] Using local neighbor video for {nid}: {vp2}")
+                else:
+                    vp2 = download_file(url, work_dir)
                 if not vp2: continue
                 vp2 = ensure_valid_video_or_skip(url, work_dir, vp2)
                 if not vp2: continue

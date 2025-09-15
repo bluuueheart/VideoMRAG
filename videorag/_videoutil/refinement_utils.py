@@ -5,6 +5,38 @@ from typing import List, Dict, Any, Optional
 from PIL import Image
 from tqdm import tqdm
 from moviepy.video.io.VideoFileClip import VideoFileClip
+import traceback
+
+
+def _safe_module_move(module, device):
+    """Safely move a torch.nn.Module to `device`.
+    If a normal .to(device) raises a meta-tensor copy error, try Module.to_empty(device)
+    if available. Fall back to best-effort cpu->target moves and ignore failures.
+    """
+    if module is None:
+        return
+    try:
+        module.to(device)
+        return
+    except Exception as e:
+        msg = str(e)
+        if "meta tensor" in msg or "Cannot copy out of meta tensor" in msg:
+            try:
+                to_empty = getattr(module, "to_empty", None)
+                if callable(to_empty):
+                    to_empty(device)
+                    return
+            except Exception:
+                pass
+        try:
+            module.to('cpu')
+        except Exception:
+            pass
+        try:
+            if device != 'cpu':
+                module.to(device)
+        except Exception:
+            pass
 
 # EasyOCR
 try:
@@ -228,6 +260,7 @@ def _safe_set_yolo_classes(yolo_model, keywords: list):
     """
     if yolo_model is None:
         return
+    # Helper to move module safely, handling meta tensors initialized with init_empty_weights
     try:
         # try to detect current device from model parameters
         orig_device = None
@@ -247,7 +280,7 @@ def _safe_set_yolo_classes(yolo_model, keywords: list):
         try:
             if orig_device is not None and orig_device.type == 'cuda':
                 try:
-                    yolo_model.to('cpu')
+                    _safe_module_move(yolo_model, 'cpu')
                     moved_to_cpu = True
                 except Exception:
                     moved_to_cpu = False
@@ -260,7 +293,7 @@ def _safe_set_yolo_classes(yolo_model, keywords: list):
         # attempt to move model back to CUDA if available
         if prefer_cuda:
             try:
-                yolo_model.to('cuda:0')
+                _safe_module_move(yolo_model, 'cuda:0')
             except Exception:
                 # best-effort, ignore failures
                 pass
@@ -349,7 +382,7 @@ def detect_objects_for_segments_yolo_world(
                     try:
                         if torch.cuda.is_available():
                             try:
-                                yolo_model.to('cuda:0')
+                                _safe_module_move(yolo_model, 'cuda:0')
                             except Exception:
                                 pass
                     except Exception:

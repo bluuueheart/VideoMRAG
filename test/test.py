@@ -197,7 +197,7 @@ async def batch_main():
         if os.path.isdir(mnt_candidate):
             input_base_dir = mnt_candidate
         else:
-        input_base_dir = home_candidate
+            input_base_dir = home_candidate
     single_json_file: str | None = None
     if args.file:
         user_path = os.path.abspath(args.file)
