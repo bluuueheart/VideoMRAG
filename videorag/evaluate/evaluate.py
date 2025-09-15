@@ -91,9 +91,13 @@ except Exception:
 # Ensure DATA_ROOT_DIR defaults to the requested Benchmark path when not set
 try:
     if not (isinstance(DATA_ROOT_DIR, str) and DATA_ROOT_DIR):
-        DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR") or "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Benchmark"
+        from .._config import get_root_prefix
+        _root = get_root_prefix()
+        DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR") or os.path.join(_root, 'lx', 'Benchmark')
 except NameError:
-    DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR") or "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Benchmark"
+    from .._config import get_root_prefix
+    _root = get_root_prefix()
+    DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR") or os.path.join(_root, 'lx', 'Benchmark')
 
 
 # Prompts are now imported from .prompts without any content changes

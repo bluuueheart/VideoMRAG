@@ -152,18 +152,70 @@ class SimpleStore:
 
 def check_models(repo_root: str):
     problems = []
-    checkpoints = [
-        MINICPM_MODEL_PATH,
-        os.path.join(repo_root, "faster-distil-whisper-large-v3"),
-    ]
-    for path in checkpoints:
+    # Candidate locations (respect environment overrides and configured MODEL_ROOT)
+    from videorag._config import get_model_root
+    model_root = None
+    try:
+        model_root = get_model_root()
+    except Exception:
+        model_root = None
+
+    # Respect explicit env overrides first
+    minicpm_env = os.environ.get("MINICPM_MODEL_PATH") or os.environ.get("MINICPM_PATH")
+    faster_whisper_env = os.environ.get("FASTER_WHISPER_DIR") or os.environ.get("ASR_MODEL_PATH") or os.environ.get("DEFAULT_ASR_MODEL_PATH")
+
+    checkpoints = []
+    # MiniCPM: environment -> configured default -> skip
+    if minicpm_env:
+        checkpoints.append(minicpm_env)
+    else:
+        checkpoints.append(MINICPM_MODEL_PATH)
+
+    # ASR model: environment -> model_root-derived candidate -> repo fallback
+    if faster_whisper_env:
+        checkpoints.append(faster_whisper_env)
+    else:
+        if model_root:
+            checkpoints.append(os.path.join(model_root, 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5'))
+            checkpoints.append(os.path.join(model_root, 'deepdml', 'faster-distil-whisper-large-v3.5'))
+        checkpoints.append(os.path.join(repo_root, "faster-distil-whisper-large-v3"))
+
+    # Deduplicate while preserving order
+    seen = set()
+    checkpoints_filtered = []
+    for p in checkpoints:
+        if not p:
+            continue
+        if p in seen:
+            continue
+        seen.add(p)
+        checkpoints_filtered.append(p)
+
+    for path in checkpoints_filtered:
         if not os.path.exists(path):
             problems.append(path)
+
     if problems:
         print("[Models] Missing required model/checkpoint path(s):")
         for p in problems:
             print(" -", p)
+
+        # Provide actionable suggestions depending on environment
         print("Please follow README.md to download checkpoints before running.")
+        if not faster_whisper_env:
+            print("[Hint] You can set the ASR model path via environment: FASTER_WHISPER_DIR or ASR_MODEL_PATH")
+        else:
+            print(f"[Hint] ASR path override in environment: {faster_whisper_env} (ensure it exists)")
+        if not minicpm_env:
+            print("[Hint] If you use MiniCPM locally, set MINICPM_MODEL_PATH to the model folder path")
+        else:
+            print(f"[Hint] MiniCPM path override in environment: {minicpm_env} (ensure it exists)")
+
+        allow_online = str(os.environ.get("ALLOW_HF_DOWNLOADS", "0")).lower() in {"1", "true", "yes"}
+        if allow_online:
+            print("[Hint] ALLOW_HF_DOWNLOADS=1 -> script may download ASR model automatically when initializing ASR.")
+        else:
+            print("[Hint] To allow automatic HF downloads set: ALLOW_HF_DOWNLOADS=1")
 
 
 def normalize_question_text(question_raw: str) -> str:

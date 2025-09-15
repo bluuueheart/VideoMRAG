@@ -11,7 +11,8 @@
 输出每个子文件夹的：recall(text) recall(video) recall(all) Precision F1-Score 平均st_cosine 平均likert_score 平均rouge_l
 
 使用：
-  python compute_result_metrics.py --base /root/autodl-tmp/Result --out metrics.csv
+    python compute_result_metrics.py --base <RESULT_BASE> --out metrics.csv
+    # 默认会从统一配置 `videorag._config` 的 `get_root_prefix()` 派生（或使用环境变量 `RESULT_BASE` 覆盖）
 
 说明：
 - JSON 文件为列表或单条记录，字段兼容：
@@ -21,10 +22,16 @@
 """
 
 import argparse
+import os
 import json
 import math
-import os
 from typing import Any, Dict, Iterable, List, Optional
+
+# Centralized path configuration: import from videorag._config
+try:
+    from ._config import get_root_prefix, OUTPUT_BASE_DIR_DEFAULT
+except Exception:
+    from videorag._config import get_root_prefix, OUTPUT_BASE_DIR_DEFAULT
 
 Number = Optional[float]
 
@@ -227,7 +234,9 @@ def list_immediate_subdirs(path: str) -> List[str]:
 
 def main():
     parser = argparse.ArgumentParser(description="聚合 Result 子文件夹 JSON 计算指标")
-    parser.add_argument('--base', type=str, default='/root/autodl-tmp/Result', help='基础目录，包含若干子文件夹')
+    # Derive default base from centralized config. Prefer explicit env RESULT_BASE if set.
+    default_base = os.environ.get('RESULT_BASE') or os.path.join(get_root_prefix(), 'lx', 'Result')
+    parser.add_argument('--base', type=str, default=default_base, help='基础目录，包含若干子文件夹')
     parser.add_argument('--out', type=str, default=None, help='输出 CSV 路径（默认写到 <base>/folder_metrics.csv）')
     parser.add_argument('--debug', action='store_true', help='打印每个子文件夹的原始 per-item 指标以便调试')
     args = parser.parse_args()

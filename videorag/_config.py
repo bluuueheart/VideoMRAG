@@ -2,40 +2,69 @@
 # This file holds shared, static configuration variables to prevent circular imports.
 import os
 
-# Lazy model root detection: returns the chosen MODEL_ROOT and caches it.
-_CACHED_MODEL_ROOT = None
-def get_model_root() -> str:
-    """Detect model root once and return it. Preference order:
-    1) env var MODEL_ROOT
-    2) local /home base if exists
-    3) mounted /mnt base if exists
-    4) fallback to local /home base
+# Root prefix configuration: centralize project root overrides.
+# Set environment variable `ROOT_PREFIX` to one of:
+#   /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02
+#   /home/hadoop-aipnlp/dolphins_hdd_hadoop-aipnlp/KAI/gaojinpeng02
+# If unset, detection will prefer mounted /mnt then local /home.
+_CACHED_ROOT_PREFIX = None
+# Optional manual override: you may directly edit this variable in-place (or set env ROOT_PREFIX)
+# 服务器目录：/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/
+# 本地目录：/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/
+ROOT_PREFIX_OVERRIDE = '/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/'
 
-    The result is cached to avoid repeated filesystem checks on subsequent calls.
-    """
-    global _CACHED_MODEL_ROOT
-    if _CACHED_MODEL_ROOT:
-        return _CACHED_MODEL_ROOT
-    env_root = os.environ.get('MODEL_ROOT')
-    home_base = '/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models'
-    mnt_base = '/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models'
-    if env_root:
-        _CACHED_MODEL_ROOT = env_root
-    elif os.path.isdir(home_base):
-        _CACHED_MODEL_ROOT = home_base
-    elif os.path.isdir(mnt_base):
-        _CACHED_MODEL_ROOT = mnt_base
+def get_root_prefix() -> str:
+    global _CACHED_ROOT_PREFIX
+    if _CACHED_ROOT_PREFIX:
+        return _CACHED_ROOT_PREFIX
+
+    # 1) explicit in-memory override (useful for quickly editing the config file)
+    if ROOT_PREFIX_OVERRIDE:
+        _CACHED_ROOT_PREFIX = ROOT_PREFIX_OVERRIDE.rstrip('/')
+        return _CACHED_ROOT_PREFIX
+
+    # 2) environment variable overrides
+    env = os.environ.get('ROOT_PREFIX') or os.environ.get('MODEL_ROOT')
+    if env:
+        _CACHED_ROOT_PREFIX = env.rstrip('/')
+        return _CACHED_ROOT_PREFIX
+
+    # 3) auto-detection (prefer mounted /mnt then local /home)
+    mnt_candidate = '/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/'
+    home_candidate = '/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/'
+    if os.path.isdir(mnt_candidate):
+        _CACHED_ROOT_PREFIX = mnt_candidate
+    elif os.path.isdir(home_candidate):
+        _CACHED_ROOT_PREFIX = home_candidate
     else:
-        _CACHED_MODEL_ROOT = home_base
-    return _CACHED_MODEL_ROOT
+        _CACHED_ROOT_PREFIX = home_candidate
+    return _CACHED_ROOT_PREFIX
 
-# Backwards-compatible constant (will call getter on import)
+# Expose ROOT_PREFIX constant and helper for backwards compatibility
+ROOT_PREFIX = get_root_prefix()
+
+def get_model_root() -> str:
+    """Model root directory derived from chosen ROOT_PREFIX.
+    Returns e.g. '<ROOT_PREFIX>/00_opensource_models'.
+    """
+    return os.path.join(ROOT_PREFIX, '00_opensource_models')
+
+# Backwards-compatible constant (evaluated on import)
 MODEL_ROOT = get_model_root()
 
 # Build common model paths relative to MODEL_ROOT (these can be used as defaults)
 MINICPM_MODEL_PATH = os.path.join(MODEL_ROOT, 'huggingface.co', 'openbmb', 'MiniCPM-V-4_5')
 # YOLO-World detector model path
 YOLOWORLD_MODEL_PATH = os.path.join(MODEL_ROOT, 'yolov8m-worldv2.pt')
+
+# Derived defaults based on chosen ROOT_PREFIX (editable via ROOT_PREFIX_OVERRIDE or env)
+# These provide a single place to change shared deployment paths.
+OUTPUT_BASE_DIR_DEFAULT = os.path.join(ROOT_PREFIX, 'lx', 'Result')
+DATA_ROOT_DIR_DEFAULT = os.path.join(ROOT_PREFIX, 'lx', 'Benchmark')
+DEFAULT_EXTERNAL_MODELS_DIR = os.path.join(ROOT_PREFIX, 'lx', 'llm_models')
+DEFAULT_HF_HOME = os.path.join(ROOT_PREFIX, 'lx', 'huggingface')
+# Default faster-whisper model path under the model root
+FASTER_WHISPER_DEFAULT = os.path.join(MODEL_ROOT, 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5')
 
 # --- Frame refinement / de-dup config defaults ---
 # 感知哈希汉明距离阈值（越小越严格）
@@ -85,6 +114,13 @@ REFINE_GLOBAL_MAX_FRAMES_PER_30S_DEFAULT = 40
 
 __all__ = [
     "MINICPM_MODEL_PATH",
+    "MODEL_ROOT",
+    "ROOT_PREFIX",
+    "OUTPUT_BASE_DIR_DEFAULT",
+    "DATA_ROOT_DIR_DEFAULT",
+    "DEFAULT_EXTERNAL_MODELS_DIR",
+    "DEFAULT_HF_HOME",
+    "FASTER_WHISPER_DEFAULT",
     "DEDUP_PHASH_THRESHOLD_DEFAULT",
     "DEDUP_DEBUG",
     "FRAME_COUNT_MAPPING_EXTENDED",

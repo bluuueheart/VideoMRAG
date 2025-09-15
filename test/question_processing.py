@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Set
 
 from videorag.iterative_refinement import refine_context
 from videorag.iterative_refiner import IterativeRefiner
+from videorag._config import get_root_prefix
 from test_media_utils import download_file, ensure_valid_video_or_skip
 from test_env_utils import SimpleStore
 from segment_caption import generate_segment_caption
@@ -59,7 +60,9 @@ async def process_question(query: str, segment_urls: Dict[str, str], work_dir: s
 
     # Use local benchmark directory for pre-downloaded full videos named <video_name>.mp4
     # This workflow removes network downloads and expects videos to be present locally.
-    bench_dir = os.environ.get('BENCHMARK_VIDEO_DIR', '/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/huggingface.co/datasets/Xingonearth/Benckmark_video/BenchmarkVideo_new')
+    _root = get_root_prefix()
+    default_bench = os.path.join(_root, 'lx', 'huggingface.co', 'datasets', 'Xingonearth', 'Benckmark_video', 'BenchmarkVideo_new')
+    bench_dir = os.environ.get('BENCHMARK_VIDEO_DIR', default_bench)
     for segment_id, url in segment_urls.items():
         # Infer video file name from segment id (video_name from timing parser)
         video_name_guess, _, _ = _parse_segment_timing(segment_id)

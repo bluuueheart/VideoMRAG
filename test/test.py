@@ -47,6 +47,7 @@ _ensure_repo_root_on_syspath()
 from videorag.iterative_refinement import refine_context
 from videorag.iterative_refiner import IterativeRefiner
 from videorag._llm import get_default_external_llm_chat_model as get_default_ollama_chat_model
+from videorag._config import get_root_prefix
 
 from video_urls import video_urls_multi_segment
 from test_media_utils import (
@@ -146,14 +147,19 @@ async def batch_main():
         model_root = getattr(vr_config, 'MODEL_ROOT', None)
     except Exception:
         model_root = None
-    candidate_home = os.path.join(model_root or '', 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5') if model_root else "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
-    candidate_mnt = os.path.join(model_root or '', 'deepdml', 'faster-distil-whisper-large-v3.5') if model_root and model_root.startswith('/mnt') else "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
+    # Prefer configured constants in videorag._config (which honor ROOT_PREFIX_OVERRIDE/env)
+    try:
+        from videorag._config import FASTER_WHISPER_DEFAULT, DEFAULT_EXTERNAL_MODELS_DIR
+    except Exception:
+        FASTER_WHISPER_DEFAULT = None
+        DEFAULT_EXTERNAL_MODELS_DIR = None
+
     asr_model_path = (
         os.environ.get("FASTER_WHISPER_DIR")
         or os.environ.get("ASR_MODEL_PATH")
         or os.environ.get("DEFAULT_ASR_MODEL_PATH")
-        or (candidate_home if os.path.exists(candidate_home) else None)
-        or (candidate_mnt if os.path.exists(candidate_mnt) else None)
+        or (FASTER_WHISPER_DEFAULT if FASTER_WHISPER_DEFAULT and os.path.exists(FASTER_WHISPER_DEFAULT) else None)
+        or (DEFAULT_EXTERNAL_MODELS_DIR if DEFAULT_EXTERNAL_MODELS_DIR and os.path.exists(DEFAULT_EXTERNAL_MODELS_DIR) else None)
         or os.path.join(repo_root, "faster-distil-whisper-large-v3")
     )
     if not os.path.exists(asr_model_path):
@@ -200,12 +206,9 @@ async def batch_main():
     # 优先使用已挂载的 /mnt 路径（容器/共享存储），否则回退到原来的 /home 路径；允许环境变量覆盖
     input_base_dir = os.environ.get("INPUT_BASE_DIR")
     if not input_base_dir:
-        mnt_candidate = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Data"
-        home_candidate = "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/lx/Data"
-        if os.path.isdir(mnt_candidate):
-            input_base_dir = mnt_candidate
-        else:
-            input_base_dir = home_candidate
+        from videorag._config import get_root_prefix
+        _root = get_root_prefix()
+        input_base_dir = os.path.join(_root, 'lx', 'Data')
     single_json_file: str | None = None
     if args.file:
         user_path = os.path.abspath(args.file)
@@ -262,7 +265,8 @@ async def batch_main():
         else:
             output_base_dir = env_out
     else:
-        output_base_dir = f"/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Result/{model_tag}"
+        _root = get_root_prefix()
+        output_base_dir = os.path.join(_root, 'lx', 'Result', model_tag)
     current_mode = "base" if args.base_mode else "refine"
     
     # 如果目录不存在，不要在这里抛错；允许走顶层 JSON 模式/单文件模式

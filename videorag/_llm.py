@@ -715,7 +715,11 @@ def _get_internvl_model_path() -> str:
     # Prefer explicit path, fallback to HF-style name under cache_dir
     return os.environ.get(
         "INTERNVL_MODEL_PATH",
-        "/root/autodl-tmp/Model/OpenGVLab/InternVL3_5-8B-HF"
+        # default: use centralized MODEL_ROOT from videorag._config when available
+        os.environ.get(
+            "INTERNVL_MODEL_PATH_FALLBACK",
+            None
+        ) or (lambda: __import__("videorag._config", fromlist=["get_model_root"]).get_model_root() + "/huggingface.co/OpenGVLab/InternVL3_5-8B-HF")()
     )
 
 def _ensure_internvl_loaded():
