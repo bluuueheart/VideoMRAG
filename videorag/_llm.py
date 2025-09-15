@@ -7,6 +7,7 @@ import torch
 import re
 
 from dataclasses import asdict, dataclass, field
+from . import _config
 
 from tenacity import (
     retry,
@@ -61,18 +62,61 @@ DEFAULT_OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "all-MiniLM-L6
 
 # Mapping short names to local filesystem Hugging Face model paths (user-provided)
 # Update these paths if needed; user-specified paths from the request are used here.
-MODEL_NAME_TO_LOCAL_PATH = {
-    "llama": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct",
-    "qwen": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/Qwen/Qwen2___5-7B-Instruct",
-    "qwen3": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/Qwen/Qwen3-32B",
-    "gemma": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/google/gemma-3-12b-it",
-    "minicpm": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5",
-    "internvl": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/OpenGVLab/InternVL3_5-8B-HF",
-    # embedding model
-    "all-MiniLM-L6-v2": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/sentence-transformers/all-MiniLM-L6-v2",
-    # YOLO-World detector binary
-    "yolov8m-worldv2": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt",
-}
+_RESOLVED_MODEL_PATHS_CACHE = {}
+
+def resolve_model_shortname(short: str) -> str | None:
+    """Resolve short name to a local path using videorag._config.get_model_root() and cache the result.
+    Returns None if resolution fails.
+    """
+    if not short:
+        return None
+    if short in _RESOLVED_MODEL_PATHS_CACHE:
+        return _RESOLVED_MODEL_PATHS_CACHE[short]
+    root = None
+    try:
+        root = _config.get_model_root()
+    except Exception:
+        root = getattr(_config, 'MODEL_ROOT', None)
+
+    def _p(*parts):
+        if not root:
+            return None
+        return os.path.join(root, *parts)
+
+    mapping = {
+        "llama": lambda: _p('huggingface.co', 'meta-llama', 'Llama-3.2-11B-Vision-Instruct'),
+        "qwen": lambda: _p('Qwen', 'Qwen2___5-7B-Instruct'),
+        "qwen3": lambda: _p('huggingface.co', 'Qwen', 'Qwen3-32B'),
+        "gemma": lambda: _p('huggingface.co', 'google', 'gemma-3-12b-it'),
+        "minicpm": lambda: _p('huggingface.co', 'openbmb', 'MiniCPM-V-4_5'),
+        "internvl": lambda: _p('huggingface.co', 'OpenGVLab', 'InternVL3_5-8B-HF'),
+        "all-MiniLM-L6-v2": lambda: _p('sentence-transformers', 'all-MiniLM-L6-v2'),
+        "yolov8m-worldv2": lambda: _p('yolov8m-worldv2.pt'),
+    }
+
+    resolver = mapping.get(short)
+    if not resolver:
+        _RESOLVED_MODEL_PATHS_CACHE[short] = None
+        return None
+    try:
+        p = resolver()
+        if p and os.path.exists(p):
+            _RESOLVED_MODEL_PATHS_CACHE[short] = p
+            return p
+        # if path does not exist, still store the candidate (so caller may decide to fallback)
+        _RESOLVED_MODEL_PATHS_CACHE[short] = p
+        return p
+    except Exception:
+        _RESOLVED_MODEL_PATHS_CACHE[short] = None
+        return None
+
+# Backwards-compatible mapping for code that expects MODEL_NAME_TO_LOCAL_PATH
+MODEL_NAME_TO_LOCAL_PATH = {}
+for s in ["llama", "qwen", "qwen3", "gemma", "minicpm", "internvl", "all-MiniLM-L6-v2", "yolov8m-worldv2"]:
+    try:
+        MODEL_NAME_TO_LOCAL_PATH[s] = resolve_model_shortname(s)
+    except Exception:
+        MODEL_NAME_TO_LOCAL_PATH[s] = None
 
 # Cache for loaded HF text models and tokenizers
 _HF_TEXT_MODELS = {}

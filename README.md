@@ -128,9 +128,8 @@
   python test.py --gpus 0,1 --workers 2
 
   1) 为不同 GPU 指定不同的模型（父进程会将对应模型设置为子进程的 `OLLAMA_CHAT_MODEL`）：
-  set WORKER_GPUS=0,1
-  set MODEL_GPU_OVERRIDES=0=llama,1=internvl
-  python test.py --gpus 0,1 --workers 2
+worker.script = bash -lc "pip3 install -r requirements.txt -i http://pypi.sankuai.com/simple/ --trusted-host pypi.sankuai.com && export WORKER_GPUS=0,1,2,3 && export MODEL_GPU_OVERRIDES='0=llama,1=gemma,2=qwen,3=internvl' && python test/test.py --gpus 0,1,2,3 --workers 4"
+
 
   说明：VLM 加速（视觉-语言模块加速）在脚本中默认启用（llm_cfg.vlm_accel=True），子进程会收到 `VLM_ACCEL=1` 环境变量，后端实现需读取该标记并执行具体优化。
 

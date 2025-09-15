@@ -1,10 +1,41 @@
 # videorag/_config.py
 # This file holds shared, static configuration variables to prevent circular imports.
+import os
 
-MINICPM_MODEL_PATH = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/openbmb/MiniCPM-V-4_5"
+# Lazy model root detection: returns the chosen MODEL_ROOT and caches it.
+_CACHED_MODEL_ROOT = None
+def get_model_root() -> str:
+    """Detect model root once and return it. Preference order:
+    1) env var MODEL_ROOT
+    2) local /home base if exists
+    3) mounted /mnt base if exists
+    4) fallback to local /home base
 
+    The result is cached to avoid repeated filesystem checks on subsequent calls.
+    """
+    global _CACHED_MODEL_ROOT
+    if _CACHED_MODEL_ROOT:
+        return _CACHED_MODEL_ROOT
+    env_root = os.environ.get('MODEL_ROOT')
+    home_base = '/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models'
+    mnt_base = '/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models'
+    if env_root:
+        _CACHED_MODEL_ROOT = env_root
+    elif os.path.isdir(home_base):
+        _CACHED_MODEL_ROOT = home_base
+    elif os.path.isdir(mnt_base):
+        _CACHED_MODEL_ROOT = mnt_base
+    else:
+        _CACHED_MODEL_ROOT = home_base
+    return _CACHED_MODEL_ROOT
+
+# Backwards-compatible constant (will call getter on import)
+MODEL_ROOT = get_model_root()
+
+# Build common model paths relative to MODEL_ROOT (these can be used as defaults)
+MINICPM_MODEL_PATH = os.path.join(MODEL_ROOT, 'huggingface.co', 'openbmb', 'MiniCPM-V-4_5')
 # YOLO-World detector model path
-YOLOWORLD_MODEL_PATH = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/yolov8m-worldv2.pt"
+YOLOWORLD_MODEL_PATH = os.path.join(MODEL_ROOT, 'yolov8m-worldv2.pt')
 
 # --- Frame refinement / de-dup config defaults ---
 # 感知哈希汉明距离阈值（越小越严格）

@@ -139,13 +139,21 @@ async def batch_main():
     # Allow env override; else use repo_root/faster-distil-whisper-large-v3
     # Prefer explicit environment overrides; else default to user-provided shared model location or repo fallback
     # User-provided path (from your message)
-    user_model_path = "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
+    # Prefer the /home path where user indicated models are stored, then mounted /mnt, then env overrides, then repo fallback
+    # Prefer MODEL_ROOT (if configured by videorag._config) so all models use same root
+    try:
+        from videorag import _config as vr_config
+        model_root = getattr(vr_config, 'MODEL_ROOT', None)
+    except Exception:
+        model_root = None
+    candidate_home = os.path.join(model_root or '', 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5') if model_root else "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
+    candidate_mnt = os.path.join(model_root or '', 'deepdml', 'faster-distil-whisper-large-v3.5') if model_root and model_root.startswith('/mnt') else "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
     asr_model_path = (
         os.environ.get("FASTER_WHISPER_DIR")
         or os.environ.get("ASR_MODEL_PATH")
         or os.environ.get("DEFAULT_ASR_MODEL_PATH")
-        or user_model_path
-        or "/home/hadoop-aipnlp/dolphinfs_hdd_hadoop-aipnlp/KAI/gaojinpeng02/00_opensource_models/huggingface.co/deepdml/faster-distil-whisper-large-v3.5"
+        or (candidate_home if os.path.exists(candidate_home) else None)
+        or (candidate_mnt if os.path.exists(candidate_mnt) else None)
         or os.path.join(repo_root, "faster-distil-whisper-large-v3")
     )
     if not os.path.exists(asr_model_path):
@@ -254,7 +262,7 @@ async def batch_main():
         else:
             output_base_dir = env_out
     else:
-    output_base_dir = f"/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Result/{model_tag}"
+        output_base_dir = f"/mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/gaojinpeng02/lx/Result/{model_tag}"
     current_mode = "base" if args.base_mode else "refine"
     
     # 如果目录不存在，不要在这里抛错；允许走顶层 JSON 模式/单文件模式

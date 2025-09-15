@@ -102,27 +102,19 @@ def ensure_valid_video_or_skip(url: str, work_dir: str, video_path: str) -> str 
     """Ensure the MP4 at video_path is valid. If invalid, force redownload; if still invalid, try faststart repair. Returns a valid path or None to skip."""
     if is_valid_video(video_path):
         return video_path
-    print(f"[Validate] Detected invalid video file: {video_path}. Forcing re-download...")
-    try:
-        if os.path.exists(video_path):
-            os.remove(video_path)
-    except Exception:
-        pass
-    new_path = download_file(url, work_dir)
-    if new_path and is_valid_video(new_path):
-        return new_path
-    print(f"[Validate] Re-download did not produce a valid MP4. Attempting repair...")
-    repaired = repair_mp4_faststart(new_path or video_path)
+    print(f"[Validate] Detected invalid video file: {video_path}. Network re-download disabled in local-only mode.")
+    # Attempt local repair via ffmpeg faststart remux only. Do NOT attempt network download.
+    repaired = repair_mp4_faststart(video_path)
     if repaired and is_valid_video(repaired):
         # Replace original path reference with repaired file
         try:
-            shutil.move(repaired, new_path or video_path)
-            final_path = new_path or video_path
+            shutil.move(repaired, video_path)
+            final_path = video_path
         except Exception:
             final_path = repaired
         print(f"[Validate] Repair succeeded: {final_path}")
         return final_path if is_valid_video(final_path) else None
-    print(f"[Validate] Repair failed. Skipping this segment: {url}")
+    print(f"[Validate] Repair failed or not possible. Skipping this segment: {video_path}")
     return None
 
 
