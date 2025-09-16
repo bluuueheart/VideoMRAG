@@ -51,12 +51,26 @@ def _load_minicpm():
     """
     model_path = os.environ.get("MINICPM_MODEL_PATH", MINICPM_MODEL_PATH)
     try:
-        model = AutoModel.from_pretrained(
-            model_path,
-            trust_remote_code=True,
-            torch_dtype=torch.float16,
-            device_map='auto'
-        )
+        try:
+            model = AutoModel.from_pretrained(
+                model_path,
+                trust_remote_code=True,
+                torch_dtype=torch.float16,
+                device_map='auto',
+                low_cpu_mem_usage=True,
+            )
+        except Exception as e_inner:
+            msg = str(e_inner) or ""
+            if "meta tensor" in msg or "Cannot copy out of meta tensor" in msg:
+                # Fallback to CPU-only load
+                model = AutoModel.from_pretrained(
+                    model_path,
+                    trust_remote_code=True,
+                    torch_dtype=torch.float32,
+                    device_map={'': 'cpu'}
+                )
+            else:
+                raise
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         if tokenizer.pad_token is None and tokenizer.eos_token is not None:
             tokenizer.pad_token = tokenizer.eos_token
@@ -77,22 +91,20 @@ def _load_minicpm():
             # Not an OOM -> respect policy: do not auto-CPU fallback
             raise
         # OOM fallback: CPU float32
-        try:
-            os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-            model = AutoModel.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.float32,
-                device_map={'': 'cpu'}
-            )
-            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-            if tokenizer.pad_token is None and tokenizer.eos_token is not None:
-                tokenizer.pad_token = tokenizer.eos_token
-            model.eval()
-            return model, tokenizer
-        except Exception:
-            # Surface the original OOM for clarity
-            raise e
+            try:
+                # Attempt accelerate dispatch across GPUs rather than falling back to CPU
+                from accelerate import init_empty_weights, load_checkpoint_and_dispatch
+                with init_empty_weights():
+                    model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+                model = load_checkpoint_and_dispatch(model, model_path, device_map="auto")
+                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+                if tokenizer.pad_token is None and tokenizer.eos_token is not None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                model.eval()
+                return model, tokenizer
+            except Exception:
+                # Surface the original OOM for clarity
+                raise e
     
 
 def segment_caption(video_name, video_path, segment_index2name, transcripts, segment_times_info, caption_result, error_queue):

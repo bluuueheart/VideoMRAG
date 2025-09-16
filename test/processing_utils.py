@@ -163,8 +163,11 @@ def extract_frames_and_compress(
             else:
                 vf_arg = f"fps={required_fps}"
 
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                raise FileNotFoundError("ffmpeg not found in PATH")
             cmd_extract = [
-                "ffmpeg", "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
+                ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
                 "-vf", vf_arg,
                 os.path.join(temp_frame_dir, "tempframe_%04d.jpg")
             ]
@@ -197,7 +200,12 @@ def extract_frames_and_compress(
                             pass
                 shutil.rmtree(temp_frame_dir)
             except subprocess.CalledProcessError as e:
-                print(f"[FFmpeg] Error during cache-based incremental extraction: {e.stderr}")
+                stderr = e.stderr.decode() if isinstance(e.stderr, (bytes, bytearray)) else str(e.stderr)
+                print(f"[FFmpeg] Error during cache-based incremental extraction: {stderr}")
+            except FileNotFoundError as e:
+                print(f"[FFmpeg] ffmpeg not found or not executable: {e}")
+            except PermissionError as e:
+                print(f"[FFmpeg] Permission denied when running ffmpeg: {e}")
 
             # 最终返回合并后的帧列表
             final_frame_paths = sorted(glob.glob(os.path.join(frame_dir, "*.jpg")))
@@ -272,8 +280,11 @@ def extract_frames_and_compress(
                 # preserve original resolution when no scaling requested
                 vf_arg = f"fps={required_fps}"
 
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                raise FileNotFoundError("ffmpeg not found in PATH")
             cmd_extract = [
-                "ffmpeg", "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
+                ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
                 "-vf", vf_arg,
                 os.path.join(temp_frame_dir, "tempframe_%04d.jpg")
             ]
@@ -307,7 +318,12 @@ def extract_frames_and_compress(
                 shutil.rmtree(temp_frame_dir)
 
             except subprocess.CalledProcessError as e:
-                print(f"[FFmpeg] Error during incremental frame extraction: {e.stderr}")
+                stderr = e.stderr.decode() if isinstance(e.stderr, (bytes, bytearray)) else str(e.stderr)
+                print(f"[FFmpeg] Error during incremental frame extraction: {stderr}")
+            except FileNotFoundError as e:
+                print(f"[FFmpeg] ffmpeg not found or not executable: {e}")
+            except PermissionError as e:
+                print(f"[FFmpeg] Permission denied when running ffmpeg: {e}")
         else:
             print("[Frames] No new frames needed.")
 
@@ -336,15 +352,23 @@ def extract_frames_and_compress(
             else:
                 vf_arg = f"fps={fps}"
 
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                raise FileNotFoundError("ffmpeg not found in PATH")
             cmd = [
-                "ffmpeg", "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
+                ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
                 "-vf", vf_arg,
                 os.path.join(frame_dir, "frame_%04d.jpg")
             ]
             try:
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
             except subprocess.CalledProcessError as e:
-                print(f"[FFmpeg] Error during frame extraction: {e.stderr}")
+                stderr = e.stderr.decode() if isinstance(e.stderr, (bytes, bytearray)) else str(e.stderr)
+                print(f"[FFmpeg] Error during frame extraction: {stderr}")
+            except FileNotFoundError as e:
+                print(f"[FFmpeg] ffmpeg not found or not executable: {e}")
+            except PermissionError as e:
+                print(f"[FFmpeg] Permission denied when running ffmpeg: {e}")
     
     final_frame_paths = sorted(glob.glob(os.path.join(frame_dir, "*.jpg")))
     
@@ -426,11 +450,21 @@ def transcribe_segment_audio(video_path: str, asr_model: WhisperModel, start_tim
 
     if not os.path.exists(audio_path):
         try:
-            cmd = ["ffmpeg", "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path, "-q:a", "0", "-map", "a", audio_path]
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                raise FileNotFoundError("ffmpeg not found in PATH")
+            cmd = [ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path, "-q:a", "0", "-map", "a", audio_path]
             print(f"[FFmpeg] Extracting audio segment {video_id} [{start_time}-{end_time}]...")
             subprocess.run(cmd, check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
-            print(f"[FFmpeg] Error extracting audio for segment {video_path}: {e.stderr.decode()}")
+            stderr = e.stderr.decode() if isinstance(e.stderr, (bytes, bytearray)) else str(e.stderr)
+            print(f"[FFmpeg] Error extracting audio for segment {video_path}: {stderr}")
+            return ""
+        except FileNotFoundError as e:
+            print(f"[FFmpeg] ffmpeg not found or not executable: {e}")
+            return ""
+        except PermissionError as e:
+            print(f"[FFmpeg] Permission denied when running ffmpeg: {e}")
             return ""
 
     try:

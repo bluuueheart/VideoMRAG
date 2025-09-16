@@ -121,9 +121,25 @@ class VideoRAG:
     def load_caption_model(self, debug=False):
         # caption model
         if not debug:
-            self.caption_model = AutoModel.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
-            self.caption_tokenizer = AutoTokenizer.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
-            self.caption_model.eval()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    from accelerate import init_empty_weights, load_checkpoint_and_dispatch
+                    with init_empty_weights():
+                        model = AutoModel.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
+                    model = load_checkpoint_and_dispatch(model, MINICPM_MODEL_PATH, device_map="auto")
+                    tokenizer = AutoTokenizer.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
+                else:
+                    # Fallback to default single-device CPU load if no GPUs available
+                    model = AutoModel.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
+                    tokenizer = AutoTokenizer.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
+                if tokenizer.pad_token is None and tokenizer.eos_token is not None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                model.eval()
+                self.caption_model = model
+                self.caption_tokenizer = tokenizer
+            except Exception as e:
+                raise RuntimeError(f"Failed to load caption model: {e}") from e
         else:
             self.caption_model = None
             self.caption_tokenizer = None

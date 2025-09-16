@@ -6,6 +6,8 @@ import glob
 import time
 from PIL import Image
 import numpy as np
+import shutil
+from shutil import which
 
 
 def download_file(url: str, target_dir: str) -> str:
@@ -49,29 +51,46 @@ def download_file(url: str, target_dir: str) -> str:
 def get_video_resolution(video_path: str) -> tuple[int, int] | None:
     """Gets video resolution using ffprobe."""
     try:
+        ffprobe_path = which("ffprobe")
+        if not ffprobe_path:
+            raise FileNotFoundError("ffprobe not found in PATH")
         cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            ffprobe_path, "-v", "error", "-select_streams", "v:0",
             "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", video_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         width, height = map(int, result.stdout.strip().split('x'))
         return width, height
     except Exception as e:
-        print(f"[FFprobe] Error getting resolution for {video_path}: {e}")
+        # Distinguish common execution errors
+        if isinstance(e, PermissionError):
+            print(f"[FFprobe] Permission denied when running ffprobe for {video_path}: {e}")
+        elif isinstance(e, FileNotFoundError):
+            print(f"[FFprobe] ffprobe not found or not executable: {e}")
+        else:
+            print(f"[FFprobe] Error getting resolution for {video_path}: {e}")
         return None
 
 
 def get_video_duration(video_path: str) -> float | None:
     """Gets video duration in seconds using ffprobe."""
     try:
+        ffprobe_path = which("ffprobe")
+        if not ffprobe_path:
+            raise FileNotFoundError("ffprobe not found in PATH")
         cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            ffprobe_path, "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", video_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return float(result.stdout.strip())
     except Exception as e:
-        print(f"[FFprobe] Error getting duration for {video_path}: {e}")
+        if isinstance(e, PermissionError):
+            print(f"[FFprobe] Permission denied when running ffprobe for {video_path}: {e}")
+        elif isinstance(e, FileNotFoundError):
+            print(f"[FFprobe] ffprobe not found or not executable: {e}")
+        else:
+            print(f"[FFprobe] Error getting duration for {video_path}: {e}")
         return None
 
 
@@ -86,15 +105,23 @@ def repair_mp4_faststart(src_path: str) -> str | None:
         if not os.path.exists(src_path):
             return None
         repaired = os.path.splitext(src_path)[0] + "_fixed.mp4"
+        ffmpeg_path = which("ffmpeg")
+        if not ffmpeg_path:
+            raise FileNotFoundError("ffmpeg not found in PATH")
         cmd = [
-            "ffmpeg", "-y", "-i", src_path,
+            ffmpeg_path, "-y", "-i", src_path,
             "-c", "copy", "-movflags", "+faststart",
             repaired
         ]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         return repaired if os.path.exists(repaired) else None
     except Exception as e:
-        print(f"[FFmpeg] Repair failed for {src_path}: {e}")
+        if isinstance(e, PermissionError):
+            print(f"[FFmpeg] Permission denied when running ffmpeg for {src_path}: {e}")
+        elif isinstance(e, FileNotFoundError):
+            print(f"[FFmpeg] ffmpeg not found or not executable: {e}")
+        else:
+            print(f"[FFmpeg] Repair failed for {src_path}: {e}")
         return None
 
 

@@ -6,8 +6,8 @@
 torch==2.3.1
 torchvision==0.18.1
 torchaudio==2.3.1
-transformers==4.56.0
 accelerate==1.10.1
+transformers==4.56.0
 bitsandbytes==0.43.1
 timm
 einops==0.8.1
@@ -25,6 +25,7 @@ ultralytics==8.3.190
 faster-whisper==1.0.3
 scikit-image==0.25.2
 Pillow==11.3.0
+ffmpeg
 
 # -------------------------------------------------------------------
 # Embedding, Vector Search & NLP Tools
@@ -86,3 +87,4 @@ ImageHash
 nano-vectordb
 ftfy
 decord
+cartopy

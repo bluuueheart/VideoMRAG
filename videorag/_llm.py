@@ -194,19 +194,31 @@ async def local_complete_router(model_short_name: str, prompt: str, system_promp
             kwargs_tf["local_files_only"] = True
         try:
             tokenizer = AutoTokenizer.from_pretrained(path, use_fast=False, **kwargs_tf)
-            # Prefer a memory-efficient auto device dispatch, but handle meta-tensor copy errors
+            # Prefer accelerate-backed empty-weights + dispatch on GPU-rich environments
+            tried_accelerate = False
             try:
-                model = AutoModelForCausalLM.from_pretrained(path, device_map="auto", low_cpu_mem_usage=True, **kwargs_tf)
-            except Exception as e_inner:
-                msg = str(e_inner) or ""
-                if "meta tensor" in msg or "Cannot copy out of meta tensor" in msg:
-                    # Fallback: force CPU-only load to avoid meta dispatch issues in environments
+                import torch
+                if torch.cuda.is_available():
                     try:
-                        model = AutoModelForCausalLM.from_pretrained(path, device_map={'': 'cpu'}, **kwargs_tf)
-                    except Exception as e_cpu:
-                        raise RuntimeError(f"Failed to load local HF model at {path}: {e_cpu}") from e_cpu
-                else:
-                    raise RuntimeError(f"Failed to load local HF model at {path}: {e_inner}") from e_inner
+                        from accelerate import init_empty_weights, load_checkpoint_and_dispatch
+                        tried_accelerate = True
+                        with init_empty_weights():
+                            model = AutoModelForCausalLM.from_pretrained(path, **{**kwargs_tf, "trust_remote_code": True})
+                        model = load_checkpoint_and_dispatch(model, path, device_map="auto")
+                    except Exception as e_acc:
+                        # fall through to fallback below
+                        tried_accelerate = True
+                        accel_err = e_acc
+            except Exception:
+                pass
+
+            if not tried_accelerate:
+                # Fallback to standard transformers loading (memory-efficient)
+                model = AutoModelForCausalLM.from_pretrained(path, device_map="auto", low_cpu_mem_usage=True, **kwargs_tf)
+            else:
+                # If accelerate attempted and failed, raise to surface error (user requested GPUs)
+                if 'accel_err' in locals():
+                    raise RuntimeError(f"accelerate dispatch failed for {path}: {accel_err}") from accel_err
         except Exception as e:
             # Re-raise with clearer context
             raise RuntimeError(f"Failed to load local HF model at {path}: {e}") from e
@@ -496,7 +508,14 @@ async def hf_local_text_complete(model_short_name: str, prompt: str, system_prom
                 msg = str(e_inner) or ""
                 if "meta tensor" in msg or "Cannot copy out of meta tensor" in msg:
                     try:
-                        model = AutoModelForCausalLM.from_pretrained(model_path, device_map={'': 'cpu'}, **tf_kwargs)
+                        # Attempt to dispatch across available GPUs using accelerate instead of CPU fallback
+                        try:
+                            from accelerate import init_empty_weights, load_checkpoint_and_dispatch
+                            with init_empty_weights():
+                                model = AutoModelForCausalLM.from_pretrained(model_path, **{**tf_kwargs, "trust_remote_code": True})
+                            model = load_checkpoint_and_dispatch(model, model_path, device_map="auto")
+                        except Exception as e_dispatch:
+                            raise RuntimeError(f"Automatic GPU dispatch failed for {model_path}: {e_dispatch}") from e_dispatch
                     except Exception as e_cpu:
                         raise RuntimeError(f"Failed to load local HF model at {model_path}: {e_cpu}") from e_cpu
                 else:
@@ -790,10 +809,26 @@ def _ensure_internvl_loaded():
     if torch_dtype is not None:
         tf_kwargs["torch_dtype"] = torch_dtype  # type: ignore
 
-    _internvl_model = AutoModel.from_pretrained(
-        model_path,
-        **tf_kwargs
-    )
+    try:
+        _internvl_model = AutoModel.from_pretrained(
+            model_path,
+            low_cpu_mem_usage=True,
+            **tf_kwargs
+        )
+    except Exception as e_inner:
+        msg = str(e_inner) or ""
+        if "meta tensor" in msg or "Cannot copy out of meta tensor" in msg:
+            try:
+                _internvl_model = AutoModel.from_pretrained(
+                    model_path,
+                    device_map={'': 'cpu'},
+                    trust_remote_code=True,
+                    revision=revision if revision else None,
+                )
+            except Exception as e_cpu:
+                raise RuntimeError(f"Failed to load InternVL HF model at {model_path}: {e_cpu}") from e_cpu
+        else:
+            raise RuntimeError(f"Failed to load InternVL HF model at {model_path}: {e_inner}") from e_inner
     _internvl_model.eval()
 
     tk_kwargs = {"trust_remote_code": True, "use_fast": False}
@@ -897,16 +932,23 @@ async def _internvl_hf_complete_impl(
             if kwargs.get('images_tensors') is not None:
                 try:
                     batch = kwargs.get('images_tensors')
-                    # Ensure batch is on same device as model
+                    # Ensure batch is on same concrete device as model (avoid meta)
                     try:
-                        device = getattr(model, "device", None)
+                        device = None
+                        for p in model.parameters():
+                            try:
+                                d = getattr(p, 'device', None)
+                                if d is not None and str(d) != 'meta':
+                                    device = d
+                                    break
+                            except Exception:
+                                continue
                         if device is None:
                             device = next(model.parameters()).device
                         batch = batch.to(device)
                     except Exception:
                         pass
                     # Replace image tensor in inputs if present
-                    # Many processors return keys like 'pixel_values' or 'images'
                     for k in list(inputs.keys()):
                         if isinstance(inputs[k], torch.Tensor) and inputs[k].dim() == 4:
                             inputs[k] = batch
@@ -914,11 +956,19 @@ async def _internvl_hf_complete_impl(
                     # fall back to original inputs
                     pass
             else:
-                # 尝试将张量迁移到模型设备（若单设备可用）
+                # Try to move input tensors to the model's concrete device (avoid meta)
                 try:
-                    device = getattr(model, "device", None)
+                    device = None
+                    for p in model.parameters():
+                        try:
+                            d = getattr(p, 'device', None)
+                            if d is not None and str(d) != 'meta':
+                                device = d
+                                break
+                        except Exception:
+                            continue
                     if device is None:
-                        device = next(model.parameters()).device  # 可能是 cuda 或 cpu
+                        device = next(model.parameters()).device
                     moved = {}
                     for k, v in inputs.items():
                         moved[k] = v.to(device) if isinstance(v, torch.Tensor) else v
