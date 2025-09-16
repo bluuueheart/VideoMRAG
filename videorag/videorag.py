@@ -123,16 +123,22 @@ class VideoRAG:
         if not debug:
             try:
                 import torch
+                # Allow environment override for MINICPM path
+                model_path = os.environ.get("MINICPM_MODEL_PATH", MINICPM_MODEL_PATH)
+                try:
+                    print(f"[Caption] Using MiniCPM model path: {model_path}")
+                except Exception:
+                    pass
                 if torch.cuda.is_available():
                     from accelerate import init_empty_weights, load_checkpoint_and_dispatch
                     with init_empty_weights():
-                        model = AutoModel.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
-                    model = load_checkpoint_and_dispatch(model, MINICPM_MODEL_PATH, device_map="auto")
-                    tokenizer = AutoTokenizer.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
+                        model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+                    model = load_checkpoint_and_dispatch(model, model_path, device_map="auto")
+                    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
                 else:
                     # Fallback to default single-device CPU load if no GPUs available
-                    model = AutoModel.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
-                    tokenizer = AutoTokenizer.from_pretrained(MINICPM_MODEL_PATH, trust_remote_code=True)
+                    model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+                    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
                 if tokenizer.pad_token is None and tokenizer.eos_token is not None:
                     tokenizer.pad_token = tokenizer.eos_token
                 model.eval()

@@ -24,8 +24,8 @@ def get_root_prefix() -> str:
         _CACHED_ROOT_PREFIX = ROOT_PREFIX_OVERRIDE.rstrip('/')
         return _CACHED_ROOT_PREFIX
 
-    # 2) environment variable overrides
-    env = os.environ.get('ROOT_PREFIX') or os.environ.get('MODEL_ROOT')
+    # 2) environment variable overrides (also support ROOT_PREFIX_OVERRIDE env var)
+    env = os.environ.get('ROOT_PREFIX') or os.environ.get('MODEL_ROOT') or os.environ.get('ROOT_PREFIX_OVERRIDE')
     if env:
         _CACHED_ROOT_PREFIX = env.rstrip('/')
         return _CACHED_ROOT_PREFIX

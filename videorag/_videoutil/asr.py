@@ -24,10 +24,18 @@ def speech_to_text(video_name, working_dir, segment_index2name, audio_output_for
     a local snapshot. To allow automatic downloads from the Hub, set
     `ALLOW_HF_DOWNLOADS=1` in the environment.
     """
-    # Prefer environment overrides: FASTER_WHISPER_DIR or ASR_MODEL_PATH, fallback to repo-relative path
+    # Prefer environment overrides: FASTER_WHISPER_DIR or ASR_MODEL_PATH
+    # Then prefer configured default from videorag._config (which respects ROOT_PREFIX_OVERRIDE)
+    # Finally fallback to repo-relative path
+    try:
+        from videorag._config import FASTER_WHISPER_DEFAULT
+    except Exception:
+        FASTER_WHISPER_DEFAULT = None
+
     model_dir = (
         os.environ.get("FASTER_WHISPER_DIR")
         or os.environ.get("ASR_MODEL_PATH")
+        or (FASTER_WHISPER_DEFAULT if FASTER_WHISPER_DEFAULT else None)
         or os.path.join(os.path.dirname(__file__), "..", "..", "faster-distil-whisper-large-v3")
     )
 
@@ -36,6 +44,12 @@ def speech_to_text(video_name, working_dir, segment_index2name, audio_output_for
 
     # Determine whether online downloads are allowed (opt-in)
     allow_online = str(os.environ.get("ALLOW_HF_DOWNLOADS", "0")).lower() in {"1", "true", "yes"}
+
+    # Debug: print resolved model_dir for easier diagnosis
+    try:
+        print(f"[ASR] Resolved faster-whisper model_dir: {model_dir}")
+    except Exception:
+        pass
 
     # Choose device heuristically (prefer GPU when available)
     device = "cpu"
