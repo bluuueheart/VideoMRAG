@@ -162,7 +162,7 @@ async def batch_main():
         or os.environ.get("DEFAULT_ASR_MODEL_PATH")
         or (FASTER_WHISPER_DEFAULT if FASTER_WHISPER_DEFAULT and os.path.exists(FASTER_WHISPER_DEFAULT) else None)
         or (DEFAULT_EXTERNAL_MODELS_DIR if DEFAULT_EXTERNAL_MODELS_DIR and os.path.exists(DEFAULT_EXTERNAL_MODELS_DIR) else None)
-        or os.path.join(repo_root, "faster-distil-whisper-large-v3")
+        # No repo-relative fallback; prefer environment or shared MODEL_ROOT locations
     )
     if not os.path.exists(asr_model_path):
         print(f"[ASR] Local model path not found: {asr_model_path}")

@@ -25,7 +25,7 @@ ultralytics==8.3.190
 faster-whisper==1.0.3
 scikit-image==0.25.2
 Pillow==11.3.0
-imageio-ffmpeg
+imageio-ffmpeg==0.4.7
 
 # -------------------------------------------------------------------
 # Embedding, Vector Search & NLP Tools

@@ -7,12 +7,39 @@ import time
 from PIL import Image
 import numpy as np
 import shutil
-from shutil import which
+# from shutil import which
 try:
     # optional dependency that may provide a bundled ffmpeg binary
     import imageio_ffmpeg
 except Exception:
     imageio_ffmpeg = None
+
+
+def get_imageio_ffmpeg_exe() -> str | None:
+    """Return a usable ffmpeg executable path from imageio_ffmpeg in a
+    backward/forward-compatible way.
+
+    Some versions expose `get_exe()`, others `get_ffmpeg_exe()`. Try
+    known callables and return the first working result, otherwise None.
+    """
+    if imageio_ffmpeg is None:
+        return None
+    # try common names in order
+    candidates = [
+        getattr(imageio_ffmpeg, 'get_exe', None),
+        getattr(imageio_ffmpeg, 'get_ffmpeg_exe', None),
+        getattr(imageio_ffmpeg, 'get_ffmpeg_exe', None),
+    ]
+    for fn in candidates:
+        if callable(fn):
+            try:
+                path = fn()
+                if path:
+                    return path
+            except Exception:
+                # ignore and try next
+                continue
+    return None
 import re
 
 
@@ -57,72 +84,40 @@ def download_file(url: str, target_dir: str) -> str:
 def get_video_resolution(video_path: str) -> tuple[int, int] | None:
     """Gets video resolution using ffprobe."""
     try:
-        ffprobe_path = which("ffprobe")
-        if not ffprobe_path:
-            # fallback: try to probe using ffmpeg (imageio-ffmpeg may provide ffmpeg)
-            ffmpeg_path = which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
-            if not ffmpeg_path:
-                raise FileNotFoundError("ffprobe not found in PATH")
-            # run ffmpeg -i and parse stderr for resolution
-            cmd = [ffmpeg_path, "-i", video_path]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
-            stderr = proc.stderr or proc.stdout or ""
-            # find pattern like 'Stream #0:0.* Video: ... 1920x1080'
-            m = re.search(r"(\d{2,5})x(\d{2,5})", stderr)
-            if m:
-                width, height = int(m.group(1)), int(m.group(2))
-                return width, height
-            raise RuntimeError("Unable to parse resolution from ffmpeg output")
-        cmd = [
-            ffprobe_path, "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", video_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        width, height = map(int, result.stdout.strip().split('x'))
-        return width, height
+        ffmpeg_path = get_imageio_ffmpeg_exe()
+        if not ffmpeg_path:
+            raise FileNotFoundError("imageio-ffmpeg did not provide ffmpeg executable")
+        # run ffmpeg -i and parse stderr for resolution
+        cmd = [ffmpeg_path, "-i", video_path]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        stderr = proc.stderr or proc.stdout or ""
+        m = re.search(r"(\d{2,5})x(\d{2,5})", stderr)
+        if m:
+            width, height = int(m.group(1)), int(m.group(2))
+            return width, height
+        raise RuntimeError("Unable to parse resolution from ffmpeg output")
     except Exception as e:
-        # Distinguish common execution errors
-        if isinstance(e, PermissionError):
-            print(f"[FFprobe] Permission denied when running ffprobe for {video_path}: {e}")
-        elif isinstance(e, FileNotFoundError):
-            print(f"[FFprobe] ffprobe not found or not executable: {e}")
-        else:
-            print(f"[FFprobe] Error getting resolution for {video_path}: {e}")
+        print(f"[FFmpeg] Error getting resolution for {video_path}: {e}")
         return None
 
 
 def get_video_duration(video_path: str) -> float | None:
     """Gets video duration in seconds using ffprobe."""
     try:
-        ffprobe_path = which("ffprobe")
-        if not ffprobe_path:
-            # fallback: try ffmpeg to extract duration from stderr
-            ffmpeg_path = which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
-            if not ffmpeg_path:
-                raise FileNotFoundError("ffprobe not found in PATH")
-            proc = subprocess.run([ffmpeg_path, "-i", video_path], capture_output=True, text=True)
-            stderr = proc.stderr or proc.stdout or ""
-            # look for Duration: 00:01:23.45
-            m = re.search(r"Duration: (\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)", stderr)
-            if m:
-                h = float(m.group(1))
-                mm = float(m.group(2))
-                s = float(m.group(3))
-                return h * 3600.0 + mm * 60.0 + s
-            raise RuntimeError("Unable to parse duration from ffmpeg output")
-        cmd = [
-            ffprobe_path, "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", video_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return float(result.stdout.strip())
+        ffmpeg_path = get_imageio_ffmpeg_exe()
+        if not ffmpeg_path:
+            raise FileNotFoundError("imageio-ffmpeg did not provide ffmpeg executable")
+        proc = subprocess.run([ffmpeg_path, "-i", video_path], capture_output=True, text=True)
+        stderr = proc.stderr or proc.stdout or ""
+        m = re.search(r"Duration: (\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)", stderr)
+        if m:
+            h = float(m.group(1))
+            mm = float(m.group(2))
+            s = float(m.group(3))
+            return h * 3600.0 + mm * 60.0 + s
+        raise RuntimeError("Unable to parse duration from ffmpeg output")
     except Exception as e:
-        if isinstance(e, PermissionError):
-            print(f"[FFprobe] Permission denied when running ffprobe for {video_path}: {e}")
-        elif isinstance(e, FileNotFoundError):
-            print(f"[FFprobe] ffprobe not found or not executable: {e}")
-        else:
-            print(f"[FFprobe] Error getting duration for {video_path}: {e}")
+        print(f"[FFmpeg] Error getting duration for {video_path}: {e}")
         return None
 
 
@@ -137,9 +132,9 @@ def repair_mp4_faststart(src_path: str) -> str | None:
         if not os.path.exists(src_path):
             return None
         repaired = os.path.splitext(src_path)[0] + "_fixed.mp4"
-        ffmpeg_path = which("ffmpeg")
+        ffmpeg_path = get_imageio_ffmpeg_exe()
         if not ffmpeg_path:
-            raise FileNotFoundError("ffmpeg not found in PATH")
+            raise FileNotFoundError("imageio-ffmpeg did not provide ffmpeg executable")
         cmd = [
             ffmpeg_path, "-y", "-i", src_path,
             "-c", "copy", "-movflags", "+faststart",
@@ -148,12 +143,7 @@ def repair_mp4_faststart(src_path: str) -> str | None:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         return repaired if os.path.exists(repaired) else None
     except Exception as e:
-        if isinstance(e, PermissionError):
-            print(f"[FFmpeg] Permission denied when running ffmpeg for {src_path}: {e}")
-        elif isinstance(e, FileNotFoundError):
-            print(f"[FFmpeg] ffmpeg not found or not executable: {e}")
-        else:
-            print(f"[FFmpeg] Repair failed for {src_path}: {e}")
+        print(f"[FFmpeg] Repair failed for {src_path}: {e}")
         return None
 
 

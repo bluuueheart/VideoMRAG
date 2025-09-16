@@ -16,6 +16,7 @@ from faster_whisper import WhisperModel  # 保持与原文件一致
 from test_media_utils import (
     get_video_duration,
     get_video_resolution,
+    get_imageio_ffmpeg_exe,
 )
 
 
@@ -167,7 +168,7 @@ def extract_frames_and_compress(
             else:
                 vf_arg = f"fps={required_fps}"
 
-            ffmpeg_path = shutil.which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
+            ffmpeg_path = get_imageio_ffmpeg_exe()
             if not ffmpeg_path:
                 raise FileNotFoundError("ffmpeg not found in PATH. Consider `sudo apt install ffmpeg` or `conda install -c conda-forge ffmpeg`")
             cmd_extract = [
@@ -284,7 +285,7 @@ def extract_frames_and_compress(
                 # preserve original resolution when no scaling requested
                 vf_arg = f"fps={required_fps}"
 
-            ffmpeg_path = shutil.which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
+            ffmpeg_path = get_imageio_ffmpeg_exe()
             if not ffmpeg_path:
                 raise FileNotFoundError("ffmpeg not found in PATH. Consider `sudo apt install ffmpeg` or `conda install -c conda-forge ffmpeg`")
             cmd_extract = [
@@ -356,7 +357,7 @@ def extract_frames_and_compress(
             else:
                 vf_arg = f"fps={fps}"
 
-            ffmpeg_path = shutil.which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
+            ffmpeg_path = get_imageio_ffmpeg_exe()
             if not ffmpeg_path:
                 raise FileNotFoundError("ffmpeg not found in PATH. Consider `sudo apt install ffmpeg` or `conda install -c conda-forge ffmpeg`")
             cmd = [
@@ -454,9 +455,9 @@ def transcribe_segment_audio(video_path: str, asr_model: WhisperModel, start_tim
 
     if not os.path.exists(audio_path):
         try:
-            ffmpeg_path = shutil.which("ffmpeg")
+            ffmpeg_path = get_imageio_ffmpeg_exe()
             if not ffmpeg_path:
-                raise FileNotFoundError("ffmpeg not found in PATH")
+                raise FileNotFoundError("imageio-ffmpeg did not provide ffmpeg executable")
             cmd = [ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path, "-q:a", "0", "-map", "a", audio_path]
             print(f"[FFmpeg] Extracting audio segment {video_id} [{start_time}-{end_time}]...")
             subprocess.run(cmd, check=True, capture_output=True)

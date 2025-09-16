@@ -171,14 +171,13 @@ def check_models(repo_root: str):
     else:
         checkpoints.append(MINICPM_MODEL_PATH)
 
-    # ASR model: environment -> model_root-derived candidate -> repo fallback
+    # ASR model: environment -> model_root-derived candidate
     if faster_whisper_env:
         checkpoints.append(faster_whisper_env)
     else:
         if model_root:
+            # Prefer the canonical huggingface.co layout under MODEL_ROOT
             checkpoints.append(os.path.join(model_root, 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5'))
-            checkpoints.append(os.path.join(model_root, 'deepdml', 'faster-distil-whisper-large-v3.5'))
-        checkpoints.append(os.path.join(repo_root, "faster-distil-whisper-large-v3"))
 
     # Also try direct ROOT_PREFIX-based locations (respecting ROOT_PREFIX_OVERRIDE in videorag._config)
     try:
@@ -190,7 +189,6 @@ def check_models(repo_root: str):
         # model hub under unified root prefix
         checkpoints.append(os.path.join(root_prefix, '00_opensource_models', 'huggingface.co', 'openbmb', 'MiniCPM-V-4_5'))
         checkpoints.append(os.path.join(root_prefix, '00_opensource_models', 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5'))
-        checkpoints.append(os.path.join(root_prefix, '00_opensource_models', 'deepdml', 'faster-distil-whisper-large-v3.5'))
 
     # Deduplicate while preserving order
     seen = set()

@@ -92,6 +92,13 @@
   python test/test.py --force
   ```
 
+## 多卡 (multi-GPU) 与 fp16 加载说明
+
+- 本项目新增 `videorag/_videoutil/multi_gpu.py`，封装了基于 `accelerate` 的分片加载流程以支持在多卡环境中以 `float16` 精度加载大型多模态模型（例如 MiniCPM）。
+- 运行时行为：载入模型时会优先尝试使用 `accelerate` 的 `init_empty_weights` + `load_checkpoint_and_dispatch` 以实现 fp16 分片加载并让模型参数分布在多张 GPU 上；若 `accelerate` 不可用或加载失败，代码会回退到 transformers 的 `from_pretrained(..., device_map='auto')` 策略，最后在 OOM 场景下回退到 CPU 加载。
+- 若你在多卡环境上希望启用 accelerate 加载，请安装 `accelerate` 并在运行时确保 `MINICPM_MODEL_PATH` 指向本地权重目录。若需要调试加载设备，设置环境变量 `MINICPM_DEBUG=1` 会打印模型参数所在设备集合。
+
+
   主要目录与文件（简要）
   - `test/test.py`：主入口脚本，负责调度整个任务流。  
   - `test/question_processing.py`：单题端到端逻辑（下载、切分、帧提取、ASR、构建 context、调用 refine）。  

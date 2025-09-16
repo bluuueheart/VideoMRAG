@@ -408,9 +408,23 @@ async def refine_context(
                     "temperature": 0.1,
                 }
                 import torch
-                # 在无 CUDA 或 CPU 回退时，避免使用 autocast('cuda')
-                use_cuda = getattr(torch, 'cuda', None) and torch.cuda.is_available()
-                if use_cuda:
+                # Determine whether all model parameters live on a single CUDA device
+                try:
+                    from ._videoutil.multi_gpu import model_device_set
+                    devs = model_device_set(model)
+                except Exception:
+                    try:
+                        devs = {str(p.device) for p in model.parameters()}
+                    except Exception:
+                        devs = set()
+
+                use_autocast = False
+                if any(d.startswith('cuda') for d in devs):
+                    cuda_devs = {d for d in devs if d.startswith('cuda')}
+                    if len(cuda_devs) == 1:
+                        use_autocast = True
+
+                if use_autocast:
                     with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
                         cap = model.chat(image=[img], msgs=msgs, tokenizer=tokenizer, **params)
                 else:

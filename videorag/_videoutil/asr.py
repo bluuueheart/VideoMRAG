@@ -1,10 +1,4 @@
 import os
-import torch
-import logging
-from tqdm import tqdm
-from faster_whisper import WhisperModel
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-import os
 import logging
 from tqdm import tqdm
 
@@ -26,24 +20,42 @@ def speech_to_text(video_name, working_dir, segment_index2name, audio_output_for
     """
     # Prefer environment overrides: FASTER_WHISPER_DIR or ASR_MODEL_PATH
     # Then prefer configured default from videorag._config (which respects ROOT_PREFIX_OVERRIDE)
-    # Finally fallback to repo-relative path
+    # Do NOT fallback to repo-relative or /workdir paths. This environment is offline-only
+    # so we force local model usage and disallow online downloads.
     try:
-        from videorag._config import FASTER_WHISPER_DEFAULT
+        from videorag._config import FASTER_WHISPER_DEFAULT, MODEL_ROOT
     except Exception:
         FASTER_WHISPER_DEFAULT = None
+        MODEL_ROOT = None
 
-    model_dir = (
-        os.environ.get("FASTER_WHISPER_DIR")
-        or os.environ.get("ASR_MODEL_PATH")
-        or (FASTER_WHISPER_DEFAULT if FASTER_WHISPER_DEFAULT else None)
-        or os.path.join(os.path.dirname(__file__), "..", "..", "faster-distil-whisper-large-v3")
-    )
+    env_model = os.environ.get("FASTER_WHISPER_DIR") or os.environ.get("ASR_MODEL_PATH")
+    if env_model:
+        model_dir = env_model
+    elif FASTER_WHISPER_DEFAULT:
+        model_dir = FASTER_WHISPER_DEFAULT
+    elif MODEL_ROOT:
+        # build the canonical path under MODEL_ROOT
+        model_dir = os.path.join(MODEL_ROOT, 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5')
+    else:
+        model_dir = None
 
     if WhisperModel is None:
         raise RuntimeError("faster_whisper.WhisperModel is not importable. Please install 'faster-whisper'.")
 
-    # Determine whether online downloads are allowed (opt-in)
-    allow_online = str(os.environ.get("ALLOW_HF_DOWNLOADS", "0")).lower() in {"1", "true", "yes"}
+    # Offline-only: always disable online downloads and require local model files
+    allow_online = False
+
+    # Validate model_dir is set and points to an existing directory
+    if not model_dir:
+        print("[ASR] No local model path resolved. Please set FASTER_WHISPER_DIR or ASR_MODEL_PATH.")
+        raise RuntimeError("No faster-whisper model directory configured for offline use.")
+
+    if not os.path.isdir(model_dir):
+        print(f"[ASR] Resolved model_dir does not exist: {model_dir}")
+        if MODEL_ROOT:
+            suggested = os.path.join(MODEL_ROOT, 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5')
+            print(f"Suggested default path based on ROOT_PREFIX: {suggested}")
+        raise RuntimeError(f"faster-whisper model directory not found: {model_dir}")
 
     # Debug: print resolved model_dir for easier diagnosis
     try:
@@ -70,18 +82,19 @@ def speech_to_text(video_name, working_dir, segment_index2name, audio_output_for
     # Try to pass local_files_only when available; fall back if API differs
     try:
         try:
-            model = WhisperModel(model_dir, device=device, compute_type=compute_type, local_files_only=(not allow_online))
+            model = WhisperModel(model_dir, device=device, compute_type=compute_type, local_files_only=True)
         except TypeError:
             # some faster-whisper releases may not support the kwarg
             model = WhisperModel(model_dir, device=device, compute_type=compute_type)
         model.logger.setLevel(logging.WARNING)
     except Exception as e:
         print(f"[ASR] Failed to load faster-whisper model from '{model_dir}': {e}")
-        if not allow_online:
-            print("[ASR] Online downloads are disabled. To allow automatic downloads set environment: ALLOW_HF_DOWNLOADS=1")
-            print("[ASR] Or pre-download the model to a local folder and set FASTER_WHISPER_DIR or ASR_MODEL_PATH to that folder.")
-        else:
-            print("[ASR] Model loading failed even though online downloads are allowed. Check network or model name/path.")
+        print("[ASR] This environment requires local models and online downloads are disabled.")
+        print("[ASR] Please ensure the faster-whisper model is present locally and set one of:")
+        print("  - environment variable FASTER_WHISPER_DIR or ASR_MODEL_PATH pointing to the model folder")
+        if MODEL_ROOT:
+            suggested = os.path.join(MODEL_ROOT, 'huggingface.co', 'deepdml', 'faster-distil-whisper-large-v3.5')
+            print(f"Suggested default path based on ROOT_PREFIX: {suggested}")
         raise
 
     cache_path = os.path.join(working_dir, "_cache", video_name)

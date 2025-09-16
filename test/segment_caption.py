@@ -36,7 +36,21 @@ async def generate_segment_caption(frames: List[str], llm_cfg) -> str:
         except Exception as e:
             print(f"[Caption][WARN] frame describe fail {img_path}: {e}")
             resp = ""
-        txt = (resp or "").strip().splitlines()[0].strip()
+
+        # Be defensive: the model may return empty string or multiple blank lines.
+        txt = ""
+        try:
+            if resp is None:
+                resp = ""
+            # Keep first non-empty line, fall back to empty string
+            for ln in (resp or "").splitlines():
+                if ln and ln.strip():
+                    txt = ln.strip()
+                    break
+            if not txt:
+                txt = (resp or "").strip()
+        except Exception:
+            txt = ""
         if txt.startswith('```'):
             txt = txt.strip('`')
         if (txt.startswith('"') and txt.endswith('"')) or (txt.startswith("'") and txt.endswith("'")):

@@ -45,11 +45,30 @@ def encode_video(video, frame_times):
     return frames
     
 def _load_minicpm():
-    """Prefer GPU (RTX 3080 Ti single card) and fall back to CPU only on OOM.
-    - Primary: float16 + device_map='auto' (uses cuda:0 if available)
-    - Fallback (ONLY on CUDA OOM): float32 + CPU
+    """Load MiniCPM with preference for accelerate-based fp16 sharded multi-GPU loading.
+    Fallbacks:
+      1. Try accelerate sharded fp16 (`try_accelerate_load`).
+      2. If accelerate not available or fails, fall back to transformers `from_pretrained`
+         with `device_map='auto'` and `torch_dtype=torch.float16` where possible.
+      3. On OOM or other errors, fall back to CPU float32 loader.
     """
     model_path = os.environ.get("MINICPM_MODEL_PATH", MINICPM_MODEL_PATH)
+    # Try accelerate-based sharded load first
+    try:
+        from .multi_gpu import try_accelerate_load
+        model, tokenizer = try_accelerate_load(model_path, torch_dtype=torch.float16)
+        # Optional debug: print device map when requested via env
+        try:
+            if os.environ.get('MINICPM_DEBUG'):
+                from .multi_gpu import model_device_set
+                print(f"[MINICPM] loaded via accelerate; devices={model_device_set(model)}")
+        except Exception:
+            pass
+        return model, tokenizer
+    except Exception:
+        # accelerate not available or failed; fall through to transformers loader
+        pass
+
     try:
         try:
             model = AutoModel.from_pretrained(
@@ -80,8 +99,8 @@ def _load_minicpm():
         # Only fall back to CPU when it's an OOM error
         is_oom = False
         try:
-            import torch
-            is_oom = isinstance(e, torch.cuda.OutOfMemoryError)
+            import torch as _torch
+            is_oom = isinstance(e, _torch.cuda.OutOfMemoryError)
         except Exception:
             pass
         text = str(e).lower()
@@ -91,20 +110,20 @@ def _load_minicpm():
             # Not an OOM -> respect policy: do not auto-CPU fallback
             raise
         # OOM fallback: CPU float32
-            try:
-                # Attempt accelerate dispatch across GPUs rather than falling back to CPU
-                from accelerate import init_empty_weights, load_checkpoint_and_dispatch
-                with init_empty_weights():
-                    model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
-                model = load_checkpoint_and_dispatch(model, model_path, device_map="auto")
-                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-                if tokenizer.pad_token is None and tokenizer.eos_token is not None:
-                    tokenizer.pad_token = tokenizer.eos_token
-                model.eval()
-                return model, tokenizer
-            except Exception:
-                # Surface the original OOM for clarity
-                raise e
+        try:
+            # Attempt accelerate dispatch across GPUs rather than falling back to CPU
+            from accelerate import init_empty_weights, load_checkpoint_and_dispatch
+            with init_empty_weights():
+                model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+            model = load_checkpoint_and_dispatch(model, model_path, device_map="auto")
+            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            if tokenizer.pad_token is None and tokenizer.eos_token is not None:
+                tokenizer.pad_token = tokenizer.eos_token
+            model.eval()
+            return model, tokenizer
+        except Exception:
+            # Surface the original OOM for clarity
+            raise e
     
 
 def segment_caption(video_name, video_path, segment_index2name, transcripts, segment_times_info, caption_result, error_queue):
@@ -126,13 +145,44 @@ def segment_caption(video_name, video_path, segment_index2name, transcripts, seg
                     "do_sample": False,
                     "max_new_tokens": 256,
                 }
-                with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
-                    seg_cap = model.chat(
-                        image=video_frames,
-                        msgs=msgs,
-                        tokenizer=tokenizer,
-                        **params
-                    )
+                # If model is dispatched across multiple CUDA devices, using a
+                # global `torch.autocast('cuda', ...)` may cause ops to mix
+                # devices (cuda:0 vs cuda:1) during autocast. Detect whether
+                # the model parameters live on a single CUDA device and only
+                # enable autocast in that case. Otherwise fall back to plain
+                # inference mode to avoid "Expected all tensors to be on the
+                # same device" errors.
+                try:
+                    from .multi_gpu import model_device_set
+                    devs = model_device_set(model)
+                except Exception:
+                    try:
+                        devs = {str(p.device) for p in model.parameters()}
+                    except Exception:
+                        devs = set()
+
+                use_autocast = False
+                if any(d.startswith('cuda') for d in devs):
+                    cuda_devs = {d for d in devs if d.startswith('cuda')}
+                    if len(cuda_devs) == 1:
+                        use_autocast = True
+
+                if use_autocast:
+                    with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
+                        seg_cap = model.chat(
+                            image=video_frames,
+                            msgs=msgs,
+                            tokenizer=tokenizer,
+                            **params
+                        )
+                else:
+                    with torch.inference_mode():
+                        seg_cap = model.chat(
+                            image=video_frames,
+                            msgs=msgs,
+                            tokenizer=tokenizer,
+                            **params
+                        )
                 caption_result[index] = seg_cap.replace("\n", "").replace("<|endoftext|>", "")
                 torch.cuda.empty_cache()
     except Exception as e:
@@ -193,13 +243,39 @@ def retrieved_segment_caption(caption_model, caption_tokenizer, refine_knowledge
             # remove unsupported sampling flags for this model interface
             "max_new_tokens": 256,
         }
-        with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
-            segment_caption = caption_model.chat(
-                image=video_frames,
-                msgs=msgs,
-                tokenizer=caption_tokenizer,
-                **params
-            )
+        # Same device-safety logic as above: only use autocast when the
+        # caption_model parameters live on a single CUDA device.
+        try:
+            from .multi_gpu import model_device_set
+            devs = model_device_set(caption_model)
+        except Exception:
+            try:
+                devs = {str(p.device) for p in caption_model.parameters()}
+            except Exception:
+                devs = set()
+
+        use_autocast = False
+        if any(d.startswith('cuda') for d in devs):
+            cuda_devs = {d for d in devs if d.startswith('cuda')}
+            if len(cuda_devs) == 1:
+                use_autocast = True
+
+        if use_autocast:
+            with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
+                segment_caption = caption_model.chat(
+                    image=video_frames,
+                    msgs=msgs,
+                    tokenizer=caption_tokenizer,
+                    **params
+                )
+        else:
+            with torch.inference_mode():
+                segment_caption = caption_model.chat(
+                    image=video_frames,
+                    msgs=msgs,
+                    tokenizer=caption_tokenizer,
+                    **params
+                )
         this_caption = segment_caption.replace("\n", "").replace("<|endoftext|>", "")
         caption_result[this_segment] = f"Caption:\n{this_caption}\nTranscript:\n{segment_transcript}\n\n"
         torch.cuda.empty_cache()
