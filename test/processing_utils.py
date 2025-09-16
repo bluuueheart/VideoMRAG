@@ -1,6 +1,10 @@
 import os
 import glob
 import shutil
+try:
+    import imageio_ffmpeg
+except Exception:
+    imageio_ffmpeg = None
 import subprocess
 from typing import List, Tuple
 
@@ -163,9 +167,9 @@ def extract_frames_and_compress(
             else:
                 vf_arg = f"fps={required_fps}"
 
-            ffmpeg_path = shutil.which("ffmpeg")
+            ffmpeg_path = shutil.which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
             if not ffmpeg_path:
-                raise FileNotFoundError("ffmpeg not found in PATH")
+                raise FileNotFoundError("ffmpeg not found in PATH. Consider `sudo apt install ffmpeg` or `conda install -c conda-forge ffmpeg`")
             cmd_extract = [
                 ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
                 "-vf", vf_arg,
@@ -280,9 +284,9 @@ def extract_frames_and_compress(
                 # preserve original resolution when no scaling requested
                 vf_arg = f"fps={required_fps}"
 
-            ffmpeg_path = shutil.which("ffmpeg")
+            ffmpeg_path = shutil.which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
             if not ffmpeg_path:
-                raise FileNotFoundError("ffmpeg not found in PATH")
+                raise FileNotFoundError("ffmpeg not found in PATH. Consider `sudo apt install ffmpeg` or `conda install -c conda-forge ffmpeg`")
             cmd_extract = [
                 ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
                 "-vf", vf_arg,
@@ -352,9 +356,9 @@ def extract_frames_and_compress(
             else:
                 vf_arg = f"fps={fps}"
 
-            ffmpeg_path = shutil.which("ffmpeg")
+            ffmpeg_path = shutil.which("ffmpeg") or (imageio_ffmpeg.get_exe() if imageio_ffmpeg else None)
             if not ffmpeg_path:
-                raise FileNotFoundError("ffmpeg not found in PATH")
+                raise FileNotFoundError("ffmpeg not found in PATH. Consider `sudo apt install ffmpeg` or `conda install -c conda-forge ffmpeg`")
             cmd = [
                 ffmpeg_path, "-y", "-ss", str(start_time), "-to", str(end_time), "-i", video_path,
                 "-vf", vf_arg,
