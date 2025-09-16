@@ -3,9 +3,6 @@ import os
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0,1,2,3")
 import sys
 import json
-import os
-import sys
-import json
 import logging
 import warnings
 import multiprocessing

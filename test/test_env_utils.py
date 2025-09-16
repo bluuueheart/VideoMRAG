@@ -29,8 +29,10 @@ def sanitize_cuda_libs():
 
         import importlib.util
         import sys
+        import glob
+        import ctypes
 
-        print("[Env] Running LD_LIBRARY_PATH sanitization...")
+        print("[Env] Running LD_LIBRARY_PATH sanitization and code-level cudnn preload...")
 
         # 1. Find the path to PyTorch's bundled libraries using importlib
         torch_lib_path = None
@@ -46,12 +48,12 @@ def sanitize_cuda_libs():
                     print(f"[Env] Found PyTorch lib path: {torch_lib_path}")
         except Exception as e:
             print(f"[Env] Could not find PyTorch location using importlib: {e}")
-        
+
         # 2. Get current LD_LIBRARY_PATH and filter it
         original_ld = os.environ.get("LD_LIBRARY_PATH", "")
         print(f"[Env] Original LD_LIBRARY_PATH: {original_ld}")
         paths = [p for p in original_ld.split(":") if p]
-        
+
         # Filter out known conflicting paths. Be aggressive.
         conflicting_substrings = ['nvidia/cudnn', 'cuda', 'cudnn']
         filtered_paths = []
@@ -69,7 +71,7 @@ def sanitize_cuda_libs():
 
         if removed_paths:
             print(f"[Env] Removed conflicting paths: {':'.join(removed_paths)}")
-        
+
         # 3. Prepend the torch lib path if it exists
         final_paths = filtered_paths
         if torch_lib_path:
@@ -77,7 +79,7 @@ def sanitize_cuda_libs():
             if torch_lib_path in final_paths:
                 final_paths.remove(torch_lib_path)
             final_paths.insert(0, torch_lib_path)
-        
+
         new_ld = ":".join(final_paths)
 
         if new_ld != original_ld:
@@ -85,6 +87,65 @@ def sanitize_cuda_libs():
             print(f"[Env] Set new LD_LIBRARY_PATH: {new_ld if new_ld else '<empty>'}")
         else:
             print("[Env] LD_LIBRARY_PATH did not require changes.")
+
+        # 4. Code-level: attempt to find and preload libcudnn_ops_infer.so.* before any CUDA-using imports
+        def _search_candidate_libs():
+            candidates = []
+            # torch lib path
+            if torch_lib_path:
+                candidates.append(torch_lib_path)
+            # common sys.prefix lib dirs (conda/env)
+            candidates.extend([os.path.join(sys.prefix, 'lib'), os.path.join(sys.prefix, 'lib64')])
+            # site-packages locations
+            for p in sys.path:
+                if p and 'site-packages' in p:
+                    candidates.append(p)
+            # common system locations
+            candidates.extend(['/usr/local/cuda/lib64', '/usr/local/cuda/lib', '/usr/lib/x86_64-linux-gnu', '/usr/lib', '/usr/lib64'])
+            # deduplicate while preserving order
+            seen = set()
+            filtered = []
+            for c in candidates:
+                if not c:
+                    continue
+                if c in seen:
+                    continue
+                seen.add(c)
+                filtered.append(c)
+            return filtered
+
+        found_lib = None
+        for d in _search_candidate_libs():
+            try:
+                pattern = os.path.join(d, 'libcudnn_ops_infer.so*')
+                matches = glob.glob(pattern)
+                if matches:
+                    # prefer the exact major version match (.so.8) if present
+                    matches_sorted = sorted(matches, key=lambda x: (not x.endswith('.so.8'), x))
+                    found_lib = matches_sorted[0]
+                    print(f"[Env] Found candidate cudnn lib at: {found_lib}")
+                    break
+            except Exception:
+                continue
+
+        if found_lib:
+            try:
+                # Try to preload the library into the process with RTLD_GLOBAL
+                flags = 0
+                if hasattr(ctypes, 'RTLD_NOW') and hasattr(ctypes, 'RTLD_GLOBAL'):
+                    flags = ctypes.RTLD_NOW | ctypes.RTLD_GLOBAL
+                # ctypes.CDLL accepts mode on POSIX
+                ctypes.CDLL(found_lib, mode=flags)
+                print(f"[Env] Preloaded cudnn library into process: {found_lib}")
+                # Ensure the directory is in LD_LIBRARY_PATH for any child processes
+                libdir = os.path.dirname(found_lib)
+                if libdir and libdir not in final_paths:
+                    os.environ['LD_LIBRARY_PATH'] = libdir + ((':' + os.environ.get('LD_LIBRARY_PATH')) if os.environ.get('LD_LIBRARY_PATH') else '')
+                    print(f"[Env] Prepended {libdir} to LD_LIBRARY_PATH for child processes.")
+            except OSError as e:
+                print(f"[Env] Failed to preload cudnn library ({found_lib}): {e}")
+        else:
+            print('[Env] No libcudnn_ops_infer.so* found in common candidate paths.')
 
     except Exception as e:
         print(f"[Env] A critical error occurred during LD_LIBRARY_PATH sanitization: {e}")
