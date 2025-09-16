@@ -1,4 +1,6 @@
 import os
+# Force visible CUDA devices for this process to GPUs 0-3
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0,1,2,3")
 import sys
 import json
 import os

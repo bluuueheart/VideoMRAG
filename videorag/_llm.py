@@ -934,15 +934,27 @@ async def _internvl_hf_complete_impl(
                     batch = kwargs.get('images_tensors')
                     # Ensure batch is on same concrete device as model (avoid meta)
                     try:
+                        # Prefer the device of the model input embeddings, if present
                         device = None
-                        for p in model.parameters():
-                            try:
-                                d = getattr(p, 'device', None)
-                                if d is not None and str(d) != 'meta':
-                                    device = d
-                                    break
-                            except Exception:
-                                continue
+                        try:
+                            emb = getattr(model, 'get_input_embeddings', None)
+                            if callable(emb):
+                                emb_mod = model.get_input_embeddings()
+                                device = getattr(getattr(emb_mod, 'weight', None), 'device', None)
+                                if device is not None and str(device) == 'meta':
+                                    device = None
+                        except Exception:
+                            device = None
+
+                        if device is None:
+                            for p in model.parameters():
+                                try:
+                                    d = getattr(p, 'device', None)
+                                    if d is not None and str(d) != 'meta':
+                                        device = d
+                                        break
+                                except Exception:
+                                    continue
                         if device is None:
                             device = next(model.parameters()).device
                         batch = batch.to(device)
@@ -958,15 +970,27 @@ async def _internvl_hf_complete_impl(
             else:
                 # Try to move input tensors to the model's concrete device (avoid meta)
                 try:
+                    # Prefer model embedding device for inputs to avoid cross-GPU tensors
                     device = None
-                    for p in model.parameters():
-                        try:
-                            d = getattr(p, 'device', None)
-                            if d is not None and str(d) != 'meta':
-                                device = d
-                                break
-                        except Exception:
-                            continue
+                    try:
+                        emb = getattr(model, 'get_input_embeddings', None)
+                        if callable(emb):
+                            emb_mod = model.get_input_embeddings()
+                            device = getattr(getattr(emb_mod, 'weight', None), 'device', None)
+                            if device is not None and str(device) == 'meta':
+                                device = None
+                    except Exception:
+                        device = None
+
+                    if device is None:
+                        for p in model.parameters():
+                            try:
+                                d = getattr(p, 'device', None)
+                                if d is not None and str(d) != 'meta':
+                                    device = d
+                                    break
+                            except Exception:
+                                continue
                     if device is None:
                         device = next(model.parameters()).device
                     moved = {}
