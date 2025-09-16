@@ -178,7 +178,7 @@ def check_dependencies():
         "matplotlib",
         "ctranslate2",
         "faster_whisper",
-        "hnswlib",
+    "hnswlib",
         "xxhash",
         "transformers",
         "tiktoken",

@@ -1,0 +1,89 @@
+# requirements_py310.txt
+# Target: Linux (x86_64) with Python 3.10. Recommended CUDA: 11.8 for matching wheels.
+#
+# NOTE: PyTorch binary wheels are provided separately by PyTorch and often include
+# CUDA tags (e.g. +cu118). Install torch/torchvision/torchaudio using PyTorch's
+# official instructions BEFORE installing the rest of this file. Example for CUDA 11.8:
+#
+#   python3.10 -m venv .venv
+#   source .venv/bin/activate
+#   pip install --upgrade pip
+#   pip install "torch==2.1.1+cu118" "torchvision==0.16.1+cu118" "torchaudio==2.1.1" --extra-index-url https://download.pytorch.org/whl/cu118
+#
+# After installing the PyTorch wheels, install the rest of the dependencies:
+
+# Core ML/DL Frameworks
+# NOTE: For CUDA-enabled installs prefer the +cu118 wheels from PyTorch's index
+# Example wheel install (recommended for CUDA 11.8):
+#   pip install "torch==2.1.1+cu118" "torchvision==0.16.1+cu118" "torchaudio==2.1.1" --extra-index-url https://download.pytorch.org/whl/cu118
+# If you don't need CUDA or prefer CPU-only builds, the plain packages below will install CPU wheels.
+torch==2.1.1
+torchvision==0.16.1
+torchaudio==2.1.1
+
+accelerate==1.10.1
+transformers==4.36.2
+bitsandbytes==0.42.0
+timm
+einops==0.8.1
+safetensors==0.6.2
+
+opencv-python==4.9.0.80
+pytorchvideo==0.1.5
+av==12.3.0
+easyocr==1.7.1
+ultralytics==8.3.190
+faster-whisper==1.0.3
+scikit-image==0.25.2
+Pillow==11.3.0
+imageio-ffmpeg==0.4.7
+
+sentence-transformers==2.6.1
+nltk==3.9.1
+tokenizers==0.15.2
+sentencepiece==0.2.0
+gensim==4.3.3
+
+openai
+
+numpy==1.26.4
+pandas==2.3.2
+scikit-learn==1.7.1
+scipy==1.12.0
+matplotlib==3.10.5
+seaborn==0.13.2
+tqdm==4.67.1
+PyYAML==6.0.2
+networkx==3.4.2
+
+bert-score==0.3.13
+rouge-score==0.1.2
+
+# Platform/torch-version specific packages: install manually if needed on Linux
+# For some setups (vllm/xformers/lmdeploy) you may need specific torch versions.
+# triton wheels are tied to torch builds; DO NOT blindly pip install triton here.
+# triton==2.1.0
+
+pydantic==2.11.7
+moviepy==1.0.3
+onnxruntime==1.16.3
+ctranslate2==4.4.0
+
+# Conditional/optional utilities (leave unpinned or install as needed)
+tiktoken
+httpx>=0.28.1,<1.0.0
+tenacity
+neo4j
+xxhash
+graspologic
+ImageHash
+nano-vectordb
+ftfy
+decord
+cartopy
+
+# Optional (only if you need vllm/xformers):
+# - vllm requires torch==2.7.0, tokenizers>=0.21.1, transformers>=4.51.1
+# - xformers often requires matching torch binaries
+# If you need these, consider creating a separate environment using Python 3.11
+# and pinned torch==2.7.0 along with matching torchvision/torchaudio.
