@@ -372,17 +372,19 @@ async def batch_main():
                 print(f"[Skip] No resolvable segments in {json_file_path}")
                 continue
 
-            # 输出位置：使用 query_id.json 保存结果，若缺失则回退到原文件名
+            # 输出位置：使用 query_id.json 保存结果（写入 output_base_dir），若缺失则回退到原文件名
+            # 注意：将结果统一写到 output_base_dir（基于 ROOT_PREFIX_OVERRIDE + 'lx/Result/' 或 OUTPUT_BASE_DIR 环境）
             qid = qa_data.get('query_id')
             if qid is None:
                 relative_path = os.path.basename(json_file_path) if single_json_file else os.path.relpath(json_file_path, input_base_dir)
                 output_file_path = os.path.join(output_base_dir, relative_path)
             else:
+                # 若存在 query_id，则以 query_id.json 命名并写入到 output_base_dir 下的相对子目录
                 rel_dir = os.path.dirname(os.path.relpath(json_file_path, input_base_dir)) if not single_json_file else ""
                 if rel_dir in (".", ""):
-                    output_file_path = os.path.join(input_base_dir, f"{qid}.json")
+                    output_file_path = os.path.join(output_base_dir, f"{qid}.json")
                 else:
-                    output_file_path = os.path.join(input_base_dir, rel_dir, f"{qid}.json")
+                    output_file_path = os.path.join(output_base_dir, rel_dir, f"{qid}.json")
             failure_log_path = output_file_path + ".failures.jsonl"
 
             # 读取已存在结果以便 resume

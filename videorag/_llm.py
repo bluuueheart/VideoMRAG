@@ -194,11 +194,24 @@ async def local_complete_router(model_short_name: str, prompt: str, system_promp
             kwargs_tf["local_files_only"] = True
         try:
             tokenizer = AutoTokenizer.from_pretrained(path, use_fast=False, **kwargs_tf)
-            model = AutoModelForCausalLM.from_pretrained(path, device_map="auto", **kwargs_tf)
+            # Prefer a memory-efficient auto device dispatch, but handle meta-tensor copy errors
+            try:
+                model = AutoModelForCausalLM.from_pretrained(path, device_map="auto", low_cpu_mem_usage=True, **kwargs_tf)
+            except Exception as e_inner:
+                msg = str(e_inner) or ""
+                if "meta tensor" in msg or "Cannot copy out of meta tensor" in msg:
+                    # Fallback: force CPU-only load to avoid meta dispatch issues in environments
+                    try:
+                        model = AutoModelForCausalLM.from_pretrained(path, device_map={'': 'cpu'}, **kwargs_tf)
+                    except Exception as e_cpu:
+                        raise RuntimeError(f"Failed to load local HF model at {path}: {e_cpu}") from e_cpu
+                else:
+                    raise RuntimeError(f"Failed to load local HF model at {path}: {e_inner}") from e_inner
         except Exception as e:
             # Re-raise with clearer context
             raise RuntimeError(f"Failed to load local HF model at {path}: {e}") from e
-        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, device_map="auto")
+        # Create pipeline using the already-loaded model (avoid asking pipeline to redispatch)
+        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
         out = pipe(prompt if not system_prompt else f"{system_prompt}\n\n{prompt}", max_new_tokens=int(kwargs.get("max_new_tokens", 512)), do_sample=False)
         return out[0].get("generated_text") or out[0].get("text") or ""
 
@@ -477,14 +490,24 @@ async def hf_local_text_complete(model_short_name: str, prompt: str, system_prom
             if os.path.exists(model_path):
                 tf_kwargs["local_files_only"] = True
             tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, **tf_kwargs)
-            model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", **tf_kwargs)
+            try:
+                model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", low_cpu_mem_usage=True, **tf_kwargs)
+            except Exception as e_inner:
+                msg = str(e_inner) or ""
+                if "meta tensor" in msg or "Cannot copy out of meta tensor" in msg:
+                    try:
+                        model = AutoModelForCausalLM.from_pretrained(model_path, device_map={'': 'cpu'}, **tf_kwargs)
+                    except Exception as e_cpu:
+                        raise RuntimeError(f"Failed to load local HF model at {model_path}: {e_cpu}") from e_cpu
+                else:
+                    raise RuntimeError(f"Failed to load local HF model at {model_path}: {e_inner}") from e_inner
             _HF_TEXT_MODELS[key] = (tokenizer, model)
         else:
             tokenizer, model = _HF_TEXT_MODELS[key]
 
         full_prompt = prompt if not system_prompt else f"{system_prompt}\n\n{prompt}"
 
-        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, device_map="auto")
+        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
         out = pipe(full_prompt, max_new_tokens=int(kwargs.get("max_new_tokens", 512)), do_sample=False)
         text = out[0].get("generated_text") or out[0].get("text") or ""
         return text

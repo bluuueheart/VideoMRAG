@@ -67,12 +67,24 @@ async def process_question(query: str, segment_urls: Dict[str, str], work_dir: s
         # Infer video file name from segment id (video_name from timing parser)
         video_name_guess, _, _ = _parse_segment_timing(segment_id)
         local_path = os.path.join(bench_dir, f"{video_name_guess}.mp4")
+        vp = None
         if os.path.exists(local_path):
             vp = local_path
             print(f"[Local] Using local video for {segment_id}: {vp}")
         else:
-            print(f"[Local][Missing] Local video not found for {segment_id}: {local_path}; skipping segment")
-            continue
+            # Fallback: try to find a full video by stripping trailing _<n>
+            try:
+                if '_' in video_name_guess:
+                    candidate = video_name_guess.rsplit('_', 1)[0]
+                    candidate_path = os.path.join(bench_dir, f"{candidate}.mp4")
+                    if os.path.exists(candidate_path):
+                        vp = candidate_path
+                        print(f"[Local][Fallback] Found full video for {segment_id}: {vp} (from {candidate})")
+            except Exception:
+                vp = None
+            if not vp:
+                print(f"[Local][Missing] Local video not found for {segment_id}: {local_path}; skipping segment")
+                continue
         if not vp:
             continue
         vp = ensure_valid_video_or_skip(url, work_dir, vp)
@@ -177,12 +189,23 @@ async def process_question(query: str, segment_urls: Dict[str, str], work_dir: s
                 # neighbor segments: use local full videos only (no network download)
                 _vn_guess, _, _ = _parse_segment_timing(nid)
                 local_path2 = os.path.join(bench_dir, f"{_vn_guess}.mp4")
+                vp2 = None
                 if os.path.exists(local_path2):
                     vp2 = local_path2
                     print(f"[Local] Using local neighbor video for {nid}: {vp2}")
                 else:
-                    print(f"[Local][Missing] Neighbor local video not found for {nid}: {local_path2}; skipping neighbor")
-                    continue
+                    try:
+                        if '_' in _vn_guess:
+                            candidate2 = _vn_guess.rsplit('_', 1)[0]
+                            candidate_path2 = os.path.join(bench_dir, f"{candidate2}.mp4")
+                            if os.path.exists(candidate_path2):
+                                vp2 = candidate_path2
+                                print(f"[Local][Fallback] Found full neighbor video for {nid}: {vp2} (from {candidate2})")
+                    except Exception:
+                        vp2 = None
+                    if not vp2:
+                        print(f"[Local][Missing] Neighbor local video not found for {nid}: {local_path2}; skipping neighbor")
+                        continue
                 if not vp2: continue
                 vp2 = ensure_valid_video_or_skip(url, work_dir, vp2)
                 if not vp2: continue
@@ -213,12 +236,23 @@ async def process_question(query: str, segment_urls: Dict[str, str], work_dir: s
                 if not url: continue
                 _vn_guess, _, _ = _parse_segment_timing(nid)
                 local_path2 = os.path.join(bench_dir, f"{_vn_guess}.mp4")
+                vp2 = None
                 if os.path.exists(local_path2):
                     vp2 = local_path2
                     print(f"[Local] Using local neighbor video for {nid}: {vp2}")
                 else:
-                    print(f"[Local][Missing] Neighbor local video not found for {nid}: {local_path2}; skipping neighbor")
-                    continue
+                    try:
+                        if '_' in _vn_guess:
+                            candidate2 = _vn_guess.rsplit('_', 1)[0]
+                            candidate_path2 = os.path.join(bench_dir, f"{candidate2}.mp4")
+                            if os.path.exists(candidate_path2):
+                                vp2 = candidate_path2
+                                print(f"[Local][Fallback] Found full neighbor video for {nid}: {vp2} (from {candidate2})")
+                    except Exception:
+                        vp2 = None
+                    if not vp2:
+                        print(f"[Local][Missing] Neighbor local video not found for {nid}: {local_path2}; skipping neighbor")
+                        continue
                 if not vp2: continue
                 vp2 = ensure_valid_video_or_skip(url, work_dir, vp2)
                 if not vp2: continue
